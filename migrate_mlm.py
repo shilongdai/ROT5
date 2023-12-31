@@ -82,3 +82,4 @@ if __name__ == "__main__":
     )
     trainer.train()
     rope_bert.base_model.save_pretrained(script_args.final_output_dir)
+    tokenizer.save_pretrained(script_args.final_output_dir)
