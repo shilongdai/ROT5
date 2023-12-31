@@ -81,4 +81,4 @@ if __name__ == "__main__":
         data_collator=data_collator,
     )
     trainer.train()
-    rope_bert.save_pretrained(script_args.final_output_dir)
+    rope_bert.base_model.save_pretrained(script_args.final_output_dir)

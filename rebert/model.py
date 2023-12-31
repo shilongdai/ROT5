@@ -4,9 +4,10 @@ from typing import Optional, Union, Tuple
 import numpy as np
 import torch
 from torch import nn
-from torch.nn import CrossEntropyLoss
+from torch.nn import CrossEntropyLoss, MSELoss, BCEWithLogitsLoss
 from transformers import PretrainedConfig, PreTrainedModel
-from transformers.modeling_outputs import BaseModelOutputWithPast, BaseModelOutputWithPooling, MaskedLMOutput
+from transformers.modeling_outputs import BaseModelOutputWithPast, BaseModelOutputWithPooling, MaskedLMOutput, \
+    SequenceClassifierOutput
 
 
 class ReBertConfig(PretrainedConfig):
@@ -57,8 +58,9 @@ class BertSelfAttention(nn.Module):
         self.v_proj = nn.Linear(in_features=self.d_model, out_features=self.d_model)
         self.attn_dropout = nn.Dropout(attn_dropout)
 
-    def forward(self, seq: torch.Tensor, mask: torch.Tensor, output_attentions=False):
-        k_proj, q_proj, v_proj = self.map_kqv(seq)
+    def forward(self, seq: torch.Tensor, mask: torch.Tensor, position_ids: torch.LongTensor = None,
+                output_attentions=False):
+        k_proj, q_proj, v_proj = self.map_kqv(seq, position_ids)
         raw_scores = torch.matmul(q_proj, k_proj) / np.sqrt(q_proj.shape[-1])
         masked_scores = raw_scores + mask
         scaled_scores = torch.nn.functional.softmax(masked_scores, dim=-1)
@@ -77,20 +79,20 @@ class BertSelfAttention(nn.Module):
         else:
             return proj_view.permute(0, 2, 3, 1)
 
-    def map_kqv(self, seq: torch.Tensor):
-        k_proj = self.map_key(seq)
-        q_proj = self.map_query(seq)
-        v_proj = self.map_value(seq)
+    def map_kqv(self, seq: torch.Tensor, position_ids: torch.LongTensor):
+        k_proj = self.map_key(seq, position_ids)
+        q_proj = self.map_query(seq, position_ids)
+        v_proj = self.map_value(seq, position_ids)
 
         return k_proj, q_proj, v_proj
 
-    def map_key(self, seq: torch.Tensor):
+    def map_key(self, seq: torch.Tensor, position_ids: torch.LongTensor):
         return self.multihead_view(self.k_proj(seq), transpose=True)
 
-    def map_query(self, seq: torch.Tensor):
+    def map_query(self, seq: torch.Tensor, position_ids: torch.LongTensor):
         return self.multihead_view(self.q_proj(seq))
 
-    def map_value(self, seq: torch.Tensor):
+    def map_value(self, seq: torch.Tensor, position_ids: torch.LongTensor):
         return self.multihead_view(self.v_proj(seq))
 
 
@@ -110,8 +112,9 @@ class BertMultiHeadAttention(nn.Module):
         self.output_dropout = nn.Dropout(hidden_dropout)
         self.output_norm = nn.LayerNorm(self.d_model, eps=layer_norm_eps)
 
-    def forward(self, seq: torch.Tensor, mask: torch.Tensor, output_attentions=False):
-        attention_out = self.self_attention(seq, mask, output_attentions=output_attentions)
+    def forward(self, seq: torch.Tensor, mask: torch.Tensor, position_ids: torch.LongTensor = None,
+                output_attentions=False):
+        attention_out = self.self_attention(seq, mask, position_ids, output_attentions=output_attentions)
         o_proj = self.map_output(attention_out[0])
         new_embedding = self.output_norm(o_proj + seq)
         if not output_attentions:
@@ -180,14 +183,15 @@ class ROPEEmbedding(nn.Module):
         self.register_buffer("sin", sin, persistent=False)
         self.max_seq = length
 
-    def forward(self, seq: torch.Tensor):
-        length = seq.shape[1]
+    def forward(self, seq: torch.Tensor, length):
         if length > self.max_seq:
             self.resize_rope(length, seq.device, seq.dtype)
         return self.cos[:length], self.sin[:length]
 
     @staticmethod
-    def apply_embedding(seq, cos, sin):
+    def apply_embedding(seq, cos, sin, position_ids, unsqueeze_dim=1):
+        cos = cos[position_ids].unsqueeze(unsqueeze_dim)
+        sin = sin[position_ids].unsqueeze(unsqueeze_dim)
         n_rotations = seq.shape[-1] // 2
         seq_split = torch.cat([-seq[..., n_rotations:], seq[..., :n_rotations]], dim=-1)
         roped = seq * cos + seq_split * sin
@@ -201,16 +205,16 @@ class ReBertSelfAttention(BertSelfAttention):
                          attn_dropout=attn_dropout)
         self.rope = rope
 
-    def map_key(self, seq: torch.Tensor):
+    def map_key(self, seq: torch.Tensor, position_ids: torch.LongTensor):
         k_proj = self.multihead_view(self.k_proj(seq))
-        cos, sin = self.rope(k_proj)
-        k_proj = self.rope.apply_embedding(k_proj, cos[None, :, None, :], sin[None, :, None, :])
+        cos, sin = self.rope(k_proj, length=seq.shape[-2])
+        k_proj = self.rope.apply_embedding(k_proj, cos, sin, position_ids)
         return k_proj.transpose(2, 3)
 
-    def map_query(self, seq: torch.Tensor):
+    def map_query(self, seq: torch.Tensor, position_ids: torch.LongTensor):
         q_proj = self.multihead_view(self.q_proj(seq))
-        cos, sin = self.rope(q_proj)
-        q_proj = self.rope.apply_embedding(q_proj, cos[None, :, None, :], sin[None, :, None, :])
+        cos, sin = self.rope(q_proj, length=seq.shape[-2])
+        q_proj = self.rope.apply_embedding(q_proj, cos, sin, position_ids)
         return q_proj
 
 
@@ -239,8 +243,9 @@ class ReBertEncoderLayer(nn.Module):
         self.out_dropout = nn.Dropout(config.hidden_dropout_prob)
         self.out_norm = nn.LayerNorm(self.d_model, eps=config.layer_norm_eps)
 
-    def forward(self, seq: torch.Tensor, mask: torch.Tensor, output_attentions: bool = False):
-        attn_out = self.attention(seq, mask, output_attentions=output_attentions)
+    def forward(self, seq: torch.Tensor, mask: torch.Tensor, position_ids: torch.LongTensor = None,
+                output_attentions: bool = False):
+        attn_out = self.attention(seq, mask, position_ids, output_attentions=output_attentions)
         inter_out = self.intermediate_act(self.intermediate_proj(attn_out[0]))
         layer_out = self.out_dropout(self.out_proj(inter_out))
         if output_attentions:
@@ -253,11 +258,13 @@ class ReBertEncoder(nn.Module):
     def __init__(self, config: ReBertConfig):
         super().__init__()
         self.rope = ROPEEmbedding(config.hidden_size // config.num_attention_heads, config.max_length)
+        # self.rope = LlamaRotaryEmbedding(dim=config.hidden_size // config.num_attention_heads)
         self.encoder_layers = nn.ModuleList(
             [ReBertEncoderLayer(config, rope=self.rope) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
-    def forward(self, seq: torch.Tensor, mask: torch.Tensor, output_attentions: bool = False,
+    def forward(self, seq: torch.Tensor, mask: torch.Tensor, position_ids: torch.LongTensor = None,
+                output_attentions: bool = False,
                 output_hidden_states: bool = False,
                 return_dict: bool = True):
         all_hidden_states = () if output_hidden_states else None
@@ -271,10 +278,11 @@ class ReBertEncoder(nn.Module):
                     layer.__call__,
                     final_embeddings,
                     mask,
+                    position_ids,
                     output_attentions
                 )
             else:
-                layer_out = layer(final_embeddings, mask, output_attentions)
+                layer_out = layer(final_embeddings, mask, position_ids, output_attentions)
             final_embeddings = layer_out[0]
             if output_attentions:
                 all_self_attentions = all_self_attentions + (layer_out[1],)
@@ -322,6 +330,7 @@ class ReBertModel(ReBertPreTrainedModel):
             self,
             input_ids: torch.Tensor,
             attention_mask: Optional[torch.Tensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
             return_dict: Optional[bool] = None,
@@ -339,6 +348,12 @@ class ReBertModel(ReBertPreTrainedModel):
 
         if attention_mask is None:
             attention_mask = torch.ones((batch_size, seq_length), device=device)
+        if position_ids is None:
+            device = input_ids.device
+            position_ids = torch.arange(
+                0, seq_length, dtype=torch.long, device=device
+            )
+            position_ids = position_ids.unsqueeze(0)
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
@@ -348,6 +363,7 @@ class ReBertModel(ReBertPreTrainedModel):
         encoder_outputs = self.encoder(
             embedding_output,
             mask=extended_attention_mask,
+            position_ids=position_ids,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -437,9 +453,72 @@ class ReBertForMaskedLM(ReBertPreTrainedModel):
         )
 
 
-class ReBertClassifier(nn.Module):
+class ReBertForSequenceClassification(ReBertPreTrainedModel):
 
     def __init__(self, config: ReBertConfig):
-        super().__init__()
-        self.encoder = ReBertEncoder(config)
-        self.pooler = FirstTokenPooler(config)
+        super().__init__(config)
+        self.rebert = ReBertModel(config)
+        self.num_labels = config.num_labels
+
+        classifier_dropout = (
+            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+        )
+        self.dropout = nn.Dropout(classifier_dropout)
+        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+
+    def forward(
+            self,
+            input_ids: Optional[torch.Tensor] = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            labels: Optional[torch.Tensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
+    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        outputs = self.rebert(
+            input_ids,
+            attention_mask=attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        pooled_output = outputs[1]
+
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+
+        loss = None
+        if labels is not None:
+            if self.config.problem_type is None:
+                if self.num_labels == 1:
+                    self.config.problem_type = "regression"
+                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
+                    self.config.problem_type = "single_label_classification"
+                else:
+                    self.config.problem_type = "multi_label_classification"
+
+            if self.config.problem_type == "regression":
+                loss_fct = MSELoss()
+                if self.num_labels == 1:
+                    loss = loss_fct(logits.squeeze(), labels.squeeze())
+                else:
+                    loss = loss_fct(logits, labels)
+            elif self.config.problem_type == "single_label_classification":
+                loss_fct = CrossEntropyLoss()
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            elif self.config.problem_type == "multi_label_classification":
+                loss_fct = BCEWithLogitsLoss()
+                loss = loss_fct(logits, labels)
+        if not return_dict:
+            output = (logits,) + outputs[2:]
+            return ((loss,) + output) if loss is not None else output
+
+        return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
