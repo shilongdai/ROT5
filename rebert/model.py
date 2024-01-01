@@ -338,6 +338,7 @@ class ReBertModel(ReBertPreTrainedModel):
         self.embedding = ReBertEmbedding(config.vocab_size, config.hidden_size, config.pad_token_id,
                                          config.layer_norm_eps, config.hidden_dropout_prob)
         self.encoder = ReBertEncoder(config)
+        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.pooler = FirstTokenPooler(config) if add_pooling_layer else None
         self.post_init()
 
@@ -383,7 +384,7 @@ class ReBertModel(ReBertPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        sequence_output = encoder_outputs[0]
+        sequence_output = self.layer_norm(encoder_outputs[0])
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
 
         if not return_dict:
@@ -404,7 +405,7 @@ class ReBertLMHead(nn.Module):
         self.transform = nn.Linear(in_features=config.hidden_size, out_features=config.hidden_size)
         self.transform_act = getattr(nn, config.hidden_act.upper())()
         self.layer_norm = nn.LayerNorm(normalized_shape=config.hidden_size)
-        self.decoder = nn.Linear(config.hidden_size, config.vocab_size)
+        self.decoder = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
     def forward(self, seq):
         transformed_embeddings = self.layer_norm(self.transform_act(self.transform(seq)))
