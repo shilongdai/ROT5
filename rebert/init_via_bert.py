@@ -26,10 +26,6 @@ def load_transformers_encoders(tf_layers: ModuleList, layers: ModuleList):
             l.attention.self_attention.v_proj.bias.copy_(tf_l.attention.self.value.bias)
             l.attention.o_proj.bias.copy_(tf_l.attention.output.dense.bias)
 
-            # Attention Norm
-            l.attention.output_norm.weight.copy_(tf_l.attention.output.LayerNorm.weight)
-            l.attention.output_norm.bias.copy_(tf_l.attention.output.LayerNorm.bias)
-
             # Intermediate Linear
             l.intermediate_proj.weight.copy_(tf_l.intermediate.dense.weight)
             l.intermediate_proj.bias.copy_(tf_l.intermediate.dense.bias)
