@@ -53,8 +53,8 @@ if __name__ == "__main__":
         num_attention_heads=12,
         intermediate_size=3072,
         hidden_act="gelu",
-        hidden_dropout_prob=0,
-        attention_probs_dropout_prob=0,
+        hidden_dropout_prob=0.1,
+        attention_probs_dropout_prob=0.1,
         layer_norm_eps=1e-12,
         classifier_dropout=0.1,
         max_length=max_length
