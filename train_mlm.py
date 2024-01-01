@@ -1,4 +1,3 @@
-import gc
 import random
 from dataclasses import field, dataclass
 from typing import Optional, cast
@@ -6,21 +5,20 @@ from typing import Optional, cast
 import numpy as np
 import torch
 from datasets import load_from_disk
-from transformers import AutoTokenizer, AutoModelForMaskedLM, DataCollatorForLanguageModeling, TrainingArguments, \
+from transformers import AutoTokenizer, DataCollatorForLanguageModeling, TrainingArguments, \
     Trainer, HfArgumentParser
 
-from rebert.initialize_via_roberta import load_transformers_base_bert, load_transformers_base_mlm
 from rebert.model import (ReBertConfig, ReBertForMaskedLM)
 
 
 @dataclass
 class ScriptArguments:
-    model_path: Optional[str] = field(default="roberta-base")
+    tokenizer_name: Optional[str] = field(default="mistralai/Mistral-7B-Instruct-v0.2")
     dataset_path: Optional[str] = field(default="./data/mlm")
     train_name: Optional[str] = field(default="train")
     eval_name: Optional[str] = field(default="eval")
     mlm_prob: Optional[float] = field(default=0.15)
-    model_max_length: Optional[int] = field(default=None)
+    model_max_length: Optional[int] = field(default=512)
     cache_dir: Optional[str] = field(default="./transformers_cache")
     final_output_dir: Optional[str] = field(default="./best_migrated_model")
 
@@ -35,37 +33,33 @@ if __name__ == "__main__":
     np.random.seed(train_args.seed)
     torch.manual_seed(train_args.seed)
 
-    bert_model = AutoModelForMaskedLM.from_pretrained(script_args.model_path, cache_dir=script_args.cache_dir)
+    tokenizer = AutoTokenizer.from_pretrained(script_args.tokenizer_name)
+    if not tokenizer.pad_token_id:
+        tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+        print(f"Added Pad Token: {tokenizer.pad_token_id}")
+    if not tokenizer.mask_token_id:
+        tokenizer.add_special_tokens({"mask_token": "[MASK]"})
+        print(f"Added Mask Token: {tokenizer.mask_token_id}")
+
+    print(f"Final Vocab Size: {tokenizer.vocab_size}")
     max_length = script_args.model_max_length
-    if max_length is None:
-        max_length = bert_model.config.max_length
     config = ReBertConfig(
-        pad_token_id=bert_model.config.pad_token_id,
-        bos_token_id=bert_model.config.bos_token_id,
-        eos_token_id=bert_model.config.eos_token_id,
-        vocab_size=bert_model.config.vocab_size,
-        hidden_size=bert_model.config.hidden_size,
-        num_hidden_layers=bert_model.config.num_hidden_layers,
-        num_attention_heads=bert_model.config.num_attention_heads,
-        intermediate_size=bert_model.config.intermediate_size,
-        hidden_act=bert_model.config.hidden_act,
-        hidden_dropout_prob=bert_model.config.hidden_dropout_prob,
-        attention_probs_dropout_prob=bert_model.config.attention_probs_dropout_prob,
+        pad_token_id=tokenizer.pad_token_id,
+        bos_token_id=tokenizer.bos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+        vocab_size=len(tokenizer),
+        hidden_size=768,
+        num_hidden_layers=12,
+        num_attention_heads=12,
+        intermediate_size=3072,
+        hidden_act="gelu",
+        hidden_dropout_prob=0,
+        attention_probs_dropout_prob=0,
         layer_norm_eps=1e-12,
-        classifier_dropout=bert_model.config.classifier_dropout,
+        classifier_dropout=0.1,
         max_length=max_length
     )
     rope_bert = ReBertForMaskedLM(config)
-    if bert_model.config.model_type != "rebert":
-        load_transformers_base_bert(bert_model.base_model, rope_bert.rebert)
-        load_transformers_base_mlm(bert_model.lm_head, rope_bert.mlm_head)
-    else:
-        rope_bert.load_state_dict(bert_model.state_dict())
-
-    del bert_model
-    gc.collect()
-
-    tokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=script_args.mlm_prob, mlm=True)
     print(f"Loading data from: {script_args.dataset_path}")
     ds = load_from_disk(script_args.dataset_path)
@@ -81,5 +75,5 @@ if __name__ == "__main__":
         data_collator=data_collator,
     )
     trainer.train()
-    rope_bert.base_model.save_pretrained(script_args.final_output_dir)
+    rope_bert.rebert.save_pretrained(script_args.final_output_dir)
     tokenizer.save_pretrained(script_args.final_output_dir)

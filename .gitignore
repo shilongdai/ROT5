@@ -6,3 +6,6 @@
 /rebert_rope/
 /.ipynb_checkpoints/
 /rebert_mnli_rope_tb/
+/rebert_mnli_rope/
+/roberta_mnli/
+/roberta_mnli_tb/

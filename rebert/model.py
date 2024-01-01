@@ -19,6 +19,7 @@ class ReBertConfig(PretrainedConfig):
             hidden_size=768,
             num_hidden_layers=12,
             num_attention_heads=12,
+            num_key_value_heads=4,
             intermediate_size=3072,
             hidden_act="gelu",
             hidden_dropout_prob=0.1,
@@ -35,6 +36,7 @@ class ReBertConfig(PretrainedConfig):
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
+        self.num_key_value_heads = num_key_value_heads
         self.hidden_act = hidden_act
         self.intermediate_size = intermediate_size
         self.hidden_dropout_prob = hidden_dropout_prob
@@ -43,24 +45,36 @@ class ReBertConfig(PretrainedConfig):
         self.classifier_dropout = classifier_dropout
 
 
-class BertSelfAttention(nn.Module):
+def multihead_view(proj: torch.Tensor, heads, head_size, transpose=False):
+    proj_view = proj.view(proj.shape[0], proj.shape[1], heads, head_size)
+    if not transpose:
+        return proj_view.permute(0, 2, 1, 3)
+    else:
+        return proj_view.permute(0, 2, 3, 1)
 
-    def __init__(self, d_model: int, attention_head: int, attn_dropout: float = 0.1):
+
+class ReBertBaseSelfAttention(nn.Module):
+
+    def __init__(self, d_model: int, attention_head: int, num_key_value_heads: int, attn_dropout: float = 0.1):
         super().__init__()
         assert d_model % attention_head == 0
 
         self.heads = attention_head
+        self.num_key_value_heads = num_key_value_heads
+        self.num_key_value_groups = self.heads // self.num_key_value_heads
         self.size_per_head = d_model // self.heads
         self.d_model = d_model
 
-        self.q_proj = nn.Linear(in_features=self.d_model, out_features=self.d_model)
-        self.k_proj = nn.Linear(in_features=self.d_model, out_features=self.d_model)
-        self.v_proj = nn.Linear(in_features=self.d_model, out_features=self.d_model)
+        self.q_proj = nn.Linear(in_features=self.d_model, out_features=self.heads * self.size_per_head)
+        self.k_proj = nn.Linear(in_features=self.d_model, out_features=self.num_key_value_heads * self.size_per_head)
+        self.v_proj = nn.Linear(in_features=self.d_model, out_features=self.num_key_value_heads * self.size_per_head)
         self.attn_dropout = nn.Dropout(attn_dropout)
 
     def forward(self, seq: torch.Tensor, mask: torch.Tensor, position_ids: torch.LongTensor = None,
                 output_attentions=False):
         k_proj, q_proj, v_proj = self.map_kqv(seq, position_ids)
+        k_proj = torch.repeat_interleave(k_proj, self.num_key_value_groups, dim=1)
+        v_proj = torch.repeat_interleave(v_proj, self.num_key_value_groups, dim=1)
         raw_scores = torch.matmul(q_proj, k_proj) / np.sqrt(q_proj.shape[-1])
         masked_scores = raw_scores + mask
         scaled_scores = torch.nn.functional.softmax(masked_scores, dim=-1)
@@ -72,13 +86,6 @@ class BertSelfAttention(nn.Module):
         else:
             return combined, scaled_scores
 
-    def multihead_view(self, proj: torch.Tensor, transpose=False):
-        proj_view = proj.view(proj.shape[0], proj.shape[1], self.heads, self.size_per_head)
-        if not transpose:
-            return proj_view.permute(0, 2, 1, 3)
-        else:
-            return proj_view.permute(0, 2, 3, 1)
-
     def map_kqv(self, seq: torch.Tensor, position_ids: torch.LongTensor):
         k_proj = self.map_key(seq, position_ids)
         q_proj = self.map_query(seq, position_ids)
@@ -87,18 +94,19 @@ class BertSelfAttention(nn.Module):
         return k_proj, q_proj, v_proj
 
     def map_key(self, seq: torch.Tensor, position_ids: torch.LongTensor):
-        return self.multihead_view(self.k_proj(seq), transpose=True)
+        return multihead_view(self.k_proj(seq), self.num_key_value_heads, self.size_per_head, transpose=True)
 
     def map_query(self, seq: torch.Tensor, position_ids: torch.LongTensor):
-        return self.multihead_view(self.q_proj(seq))
+        return multihead_view(self.q_proj(seq), self.heads, self.size_per_head)
 
     def map_value(self, seq: torch.Tensor, position_ids: torch.LongTensor):
-        return self.multihead_view(self.v_proj(seq))
+        return multihead_view(self.v_proj(seq), self.num_key_value_heads, self.size_per_head)
 
 
-class BertMultiHeadAttention(nn.Module):
+class ReBertBaseMultiHeadAttention(nn.Module):
 
-    def __init__(self, d_model: int, attention_head: int, attn_dropout: float = 0.1,
+    def __init__(self, d_model: int, attention_head: int, num_key_value_heads: int,
+                 attn_dropout: float = 0.1,
                  hidden_dropout: float = 0.1, layer_norm_eps: float = 1e-12):
         super().__init__()
         assert d_model % attention_head == 0
@@ -107,16 +115,17 @@ class BertMultiHeadAttention(nn.Module):
         self.size_per_head = d_model // self.heads
         self.d_model = d_model
 
-        self.self_attention = BertSelfAttention(d_model, attention_head, attn_dropout)
+        self.self_attention = ReBertBaseSelfAttention(d_model, attention_head, num_key_value_heads, attn_dropout)
         self.o_proj = nn.Linear(in_features=self.size_per_head * self.heads, out_features=self.d_model)
         self.output_dropout = nn.Dropout(hidden_dropout)
-        self.output_norm = nn.LayerNorm(self.d_model, eps=layer_norm_eps)
+        self.prelayer_norm = nn.LayerNorm(self.d_model, eps=layer_norm_eps)
 
     def forward(self, seq: torch.Tensor, mask: torch.Tensor, position_ids: torch.LongTensor = None,
                 output_attentions=False):
+        seq = self.prelayer_norm(seq)
         attention_out = self.self_attention(seq, mask, position_ids, output_attentions=output_attentions)
         o_proj = self.map_output(attention_out[0])
-        new_embedding = self.output_norm(o_proj + seq)
+        new_embedding = o_proj + seq
         if not output_attentions:
             return new_embedding,
         else:
@@ -198,32 +207,37 @@ class ROPEEmbedding(nn.Module):
         return roped
 
 
-class ReBertSelfAttention(BertSelfAttention):
+class ReBertSelfAttention(ReBertBaseSelfAttention):
 
-    def __init__(self, d_model: int, attention_head: int, rope: ROPEEmbedding, attn_dropout: float = 0.1):
+    def __init__(self, d_model: int, attention_head: int, num_key_value_heads: int,
+                 rope: ROPEEmbedding, attn_dropout: float = 0.1):
         super().__init__(d_model=d_model, attention_head=attention_head,
+                         num_key_value_heads=num_key_value_heads,
                          attn_dropout=attn_dropout)
         self.rope = rope
 
     def map_key(self, seq: torch.Tensor, position_ids: torch.LongTensor):
-        k_proj = self.multihead_view(self.k_proj(seq))
+        k_proj = multihead_view(self.k_proj(seq), self.num_key_value_heads, self.size_per_head)
         cos, sin = self.rope(k_proj, length=seq.shape[-2])
         k_proj = self.rope.apply_embedding(k_proj, cos, sin, position_ids)
         return k_proj.transpose(2, 3)
 
     def map_query(self, seq: torch.Tensor, position_ids: torch.LongTensor):
-        q_proj = self.multihead_view(self.q_proj(seq))
+        q_proj = multihead_view(self.q_proj(seq), self.heads, self.size_per_head)
         cos, sin = self.rope(q_proj, length=seq.shape[-2])
         q_proj = self.rope.apply_embedding(q_proj, cos, sin, position_ids)
         return q_proj
 
 
-class ReBertMultiHeadAttention(BertMultiHeadAttention):
+class ReBertMultiHeadAttention(ReBertBaseMultiHeadAttention):
 
-    def __init__(self, d_model: int, attention_head: int, rope: ROPEEmbedding, attn_dropout: float = 0.1,
+    def __init__(self, d_model: int, attention_head: int, num_key_value_heads: int,
+                 rope: ROPEEmbedding, attn_dropout: float = 0.1,
                  hidden_dropout: float = 0.1, layer_norm_eps: float = 1e-12):
-        super().__init__(d_model, attention_head, attn_dropout, hidden_dropout, layer_norm_eps)
-        self.self_attention = ReBertSelfAttention(d_model, attention_head, rope, attn_dropout)
+        super().__init__(d_model, attention_head, num_key_value_heads,
+                         attn_dropout, hidden_dropout, layer_norm_eps)
+        self.self_attention = ReBertSelfAttention(d_model, attention_head,
+                                                  num_key_value_heads, rope, attn_dropout)
 
 
 class ReBertEncoderLayer(nn.Module):
@@ -233,6 +247,7 @@ class ReBertEncoderLayer(nn.Module):
         self.d_model = config.hidden_size
         self.intermediate = config.intermediate_size
         self.attention = ReBertMultiHeadAttention(d_model=config.hidden_size, attention_head=config.num_attention_heads,
+                                                  num_key_value_heads=config.num_key_value_heads,
                                                   rope=rope,
                                                   attn_dropout=config.attention_probs_dropout_prob,
                                                   hidden_dropout=config.hidden_dropout_prob,
