@@ -252,6 +252,7 @@ class ReBertEncoderLayer(nn.Module):
                                                   attn_dropout=config.attention_probs_dropout_prob,
                                                   hidden_dropout=config.hidden_dropout_prob,
                                                   layer_norm_eps=config.layer_norm_eps)
+        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.intermediate_proj = nn.Linear(in_features=self.d_model, out_features=self.intermediate)
         self.intermediate_act = getattr(nn, config.hidden_act.upper())()
         self.out_proj = nn.Linear(in_features=self.intermediate, out_features=self.d_model)
@@ -260,7 +261,8 @@ class ReBertEncoderLayer(nn.Module):
     def forward(self, seq: torch.Tensor, mask: torch.Tensor, position_ids: torch.LongTensor = None,
                 output_attentions: bool = False):
         attn_out = self.attention(seq, mask, position_ids, output_attentions=output_attentions)
-        inter_out = self.intermediate_act(self.intermediate_proj(attn_out[0]))
+        normed_out = self.layer_norm(attn_out[0])
+        inter_out = self.intermediate_act(self.intermediate_proj(normed_out))
         layer_out = self.out_dropout(self.out_proj(inter_out))
         if output_attentions:
             return layer_out + attn_out[0], attn_out[1]

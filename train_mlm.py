@@ -53,8 +53,8 @@ if __name__ == "__main__":
         num_attention_heads=12,
         intermediate_size=3072,
         hidden_act="gelu",
-        hidden_dropout_prob=0,
-        attention_probs_dropout_prob=0,
+        hidden_dropout_prob=0.1,
+        attention_probs_dropout_prob=0.1,
         layer_norm_eps=1e-12,
         classifier_dropout=0.1,
         max_length=max_length
@@ -75,5 +75,8 @@ if __name__ == "__main__":
         data_collator=data_collator,
     )
     trainer.train()
-    rope_bert.rebert.save_pretrained(script_args.final_output_dir)
-    tokenizer.save_pretrained(script_args.final_output_dir)
+    trainer.accelerator.wait_for_everyone()
+    if trainer.accelerator.is_main_process:
+        trainer.save_model(script_args.final_output_dir)
+        tokenizer.save_pretrained(script_args.final_output_dir)
+    trainer.accelerator.wait_for_everyone()
