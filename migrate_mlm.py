@@ -77,5 +77,8 @@ if __name__ == "__main__":
         data_collator=data_collator,
     )
     trainer.train()
-    rope_bert.rebert.save_pretrained(script_args.final_output_dir)
-    tokenizer.save_pretrained(script_args.final_output_dir)
+    trainer.accelerator.wait_for_everyone()
+    if trainer.accelerator.is_main_process:
+        trainer.save_model(script_args.final_output_dir)
+        tokenizer.save_pretrained(script_args.final_output_dir)
+    trainer.accelerator.wait_for_everyone()
