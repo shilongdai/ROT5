@@ -19,6 +19,7 @@ class ScriptArguments:
     dataset_path: Optional[str] = field(default="./data/mlm")
     train_name: Optional[str] = field(default="train")
     eval_name: Optional[str] = field(default="eval")
+    num_kv_heads: Optional[int] = field(default=4)
     mlm_prob: Optional[float] = field(default=0.15)
     model_max_length: Optional[int] = field(default=512)
     cache_dir: Optional[str] = field(default="./transformers_cache")
@@ -52,6 +53,7 @@ if __name__ == "__main__":
         attention_probs_dropout_prob=src_model.config.attention_probs_dropout_prob,
         layer_norm_eps=src_model.config.layer_norm_eps,
         classifier_dropout=src_model.config.classifier_dropout,
+        num_key_value_heads=script_args.num_kv_heads,
         max_length=max_length
     )
     rope_bert = ReBertForMaskedLM(config)
