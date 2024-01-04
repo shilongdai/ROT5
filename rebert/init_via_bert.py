@@ -1,14 +1,17 @@
 import torch
 from torch.nn import ModuleList
-from transformers.models.roberta.modeling_roberta import RobertaEmbeddings, RobertaModel, RobertaLMHead
+from transformers.models.roberta.modeling_roberta import RobertaEmbeddings, RobertaModel, RobertaLMHead, \
+    RobertaAttention
 
-from .model import ReBertEmbedding, ReBertModel, ReBertLMHead, ReBertConfig
+from .model import ReBertEmbedding, ReBertModel, ReBertLMHead, ReBertConfig, ReBertMultiHeadAttention
 
 
 def load_transformers_embeddings(tf_embedding: RobertaEmbeddings, embeddings: ReBertEmbedding):
     with torch.no_grad():
         embeddings.word_embedding.weight.copy_(
             tf_embedding.word_embeddings.weight + tf_embedding.token_type_embeddings.weight[0])
+        embeddings.layer_norm.weight.copy_(tf_embedding.LayerNorm.weight)
+        embeddings.layer_norm.bias.copy_(tf_embedding.LayerNorm.bias)
 
 
 def average_attention_head_weights(src_weight: torch.Tensor, size_per_head, num_heads, kv_head_group_size):
@@ -46,7 +49,7 @@ def average_attention_head_biases(src_weight: torch.Tensor, size_per_head, num_h
     return output_weight.reshape(kv_group * size_per_head)
 
 
-def load_grouped_attention(tf_attention, rebert_attention, config: ReBertConfig):
+def load_grouped_attention(tf_attention: RobertaAttention, rebert_attention: ReBertMultiHeadAttention, config: ReBertConfig):
     size_per_head = config.hidden_size // config.num_attention_heads
     kv_head_group_size = config.num_attention_heads // config.num_key_value_heads
 
@@ -80,6 +83,8 @@ def load_transformers_encoders(tf_layers: ModuleList, layers: ModuleList, config
             # Intermediate Linear
             l.intermediate_proj.weight.copy_(tf_l.intermediate.dense.weight)
             l.intermediate_proj.bias.copy_(tf_l.intermediate.dense.bias)
+            l.layer_norm.weight.copy_(tf_l.intermediate.LayerNorm.weight)
+            l.layer_norm.bias.copy_(tf_l.intermediate.LayerNorm.bias)
 
             # Output Linear
             l.out_proj.weight.copy_(tf_l.output.dense.weight)

@@ -75,6 +75,7 @@ class ReBertBaseSelfAttention(nn.Module):
         k_proj, q_proj, v_proj = self.map_kqv(seq, position_ids)
         k_proj = torch.repeat_interleave(k_proj, self.num_key_value_groups, dim=1)
         v_proj = torch.repeat_interleave(v_proj, self.num_key_value_groups, dim=1)
+        k_proj = k_proj.transpose(2, 3)
         raw_scores = torch.matmul(q_proj, k_proj) / np.sqrt(q_proj.shape[-1])
         masked_scores = raw_scores + mask
         scaled_scores = torch.nn.functional.softmax(masked_scores, dim=-1)
@@ -94,7 +95,7 @@ class ReBertBaseSelfAttention(nn.Module):
         return k_proj, q_proj, v_proj
 
     def map_key(self, seq: torch.Tensor, position_ids: torch.LongTensor):
-        return multihead_view(self.k_proj(seq), self.num_key_value_heads, self.size_per_head, transpose=True)
+        return multihead_view(self.k_proj(seq), self.num_key_value_heads, self.size_per_head)
 
     def map_query(self, seq: torch.Tensor, position_ids: torch.LongTensor):
         return multihead_view(self.q_proj(seq), self.heads, self.size_per_head)
@@ -115,10 +116,10 @@ class ReBertBaseMultiHeadAttention(nn.Module):
         self.size_per_head = d_model // self.heads
         self.d_model = d_model
 
+        self.prelayer_norm = nn.LayerNorm(self.d_model, eps=layer_norm_eps)
         self.self_attention = ReBertBaseSelfAttention(d_model, attention_head, num_key_value_heads, attn_dropout)
         self.o_proj = nn.Linear(in_features=self.size_per_head * self.heads, out_features=self.d_model)
         self.output_dropout = nn.Dropout(hidden_dropout)
-        self.prelayer_norm = nn.LayerNorm(self.d_model, eps=layer_norm_eps)
 
     def forward(self, seq: torch.Tensor, mask: torch.Tensor, position_ids: torch.LongTensor = None,
                 output_attentions=False):
@@ -220,7 +221,7 @@ class ReBertSelfAttention(ReBertBaseSelfAttention):
         k_proj = multihead_view(self.k_proj(seq), self.num_key_value_heads, self.size_per_head)
         cos, sin = self.rope(k_proj, length=seq.shape[-2])
         k_proj = self.rope.apply_embedding(k_proj, cos, sin, position_ids)
-        return k_proj.transpose(2, 3)
+        return k_proj
 
     def map_query(self, seq: torch.Tensor, position_ids: torch.LongTensor):
         q_proj = multihead_view(self.q_proj(seq), self.heads, self.size_per_head)
