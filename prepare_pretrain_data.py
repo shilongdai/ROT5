@@ -108,7 +108,7 @@ if __name__ == "__main__":
         ds = ds.train_test_split(test_size=script_args.eval_amt)
         ds = DatasetDict({
             "train": ds["train"],
-            "eval": ds["test"]
+            "validation": ds["test"]
         })
     print(f"Dataset {script_args.dataset_path}:\n{ds}")
 
