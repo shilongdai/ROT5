@@ -12,6 +12,9 @@ def load_transformers_embeddings(tf_embedding: RobertaEmbeddings, embeddings: Re
 
 
 def average_attention_head_weights(src_weight: torch.Tensor, size_per_head, num_heads, kv_head_group_size):
+    if kv_head_group_size == 1:
+        return src_weight
+
     input_size = size_per_head * num_heads
     kv_group = num_heads // kv_head_group_size
     src_weight = src_weight.reshape(num_heads, size_per_head, input_size)
@@ -27,6 +30,9 @@ def average_attention_head_weights(src_weight: torch.Tensor, size_per_head, num_
 
 
 def average_attention_head_biases(src_weight: torch.Tensor, size_per_head, num_heads, kv_head_group_size):
+    if kv_head_group_size == 1:
+        return src_weight
+
     kv_group = num_heads // kv_head_group_size
     src_weight = src_weight.reshape(num_heads, size_per_head)
     output_weight = torch.zeros(kv_group, size_per_head)
