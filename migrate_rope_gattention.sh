@@ -8,4 +8,4 @@ deepspeed migrate_mlm.py --output_dir="./rebert_roberta" --final_output_dir "./r
   --save_steps 50 --save_strategy "steps" --save_total_limit 10 --load_best_model_at_end True \
   --bf16 True --gradient_checkpointing True --deepspeed "./deepspeed/deepspeed_2.json" \
   --dataset_path "data/minipile_roberta" --eval_name "validation" \
-  --num_kv_heads 4
+  --num_kv_heads 12
