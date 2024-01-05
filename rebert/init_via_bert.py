@@ -83,8 +83,6 @@ def load_transformers_encoders(tf_layers: ModuleList, layers: ModuleList, config
             # Intermediate Linear
             l.intermediate_proj.weight.copy_(tf_l.intermediate.dense.weight)
             l.intermediate_proj.bias.copy_(tf_l.intermediate.dense.bias)
-            l.layer_norm.weight.copy_(tf_l.intermediate.LayerNorm.weight)
-            l.layer_norm.bias.copy_(tf_l.intermediate.LayerNorm.bias)
 
             # Output Linear
             l.out_proj.weight.copy_(tf_l.output.dense.weight)
