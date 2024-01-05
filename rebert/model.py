@@ -19,7 +19,7 @@ class ReBertConfig(PretrainedConfig):
             hidden_size=768,
             num_hidden_layers=12,
             num_attention_heads=12,
-            num_key_value_heads=4,
+            num_key_value_heads=12,
             intermediate_size=3072,
             hidden_act="gelu",
             hidden_dropout_prob=0.1,
