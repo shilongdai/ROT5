@@ -104,7 +104,7 @@ def load_transformers_base_mlm(tf_mlm: RobertaLMHead, mlm: ReBertLMHead):
 
 def migrate_grouped_attention(src: ReBertMultiHeadAttention, target: ReBertMultiHeadAttention,
                               config: ReBertConfig, src_kv_heads: int):
-    target.o_proj.load_state_dict(src.state_dict())
+    target.o_proj.load_state_dict(src.o_proj.state_dict())
     target.prelayer_norm.load_state_dict(src.prelayer_norm.state_dict())
     target.self_attention.q_proj.load_state_dict(src.self_attention.q_proj.state_dict())
 
