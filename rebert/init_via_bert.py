@@ -129,7 +129,7 @@ def migrate_grouped_attention(src: ReBertMultiHeadAttention, target: ReBertMulti
 
 def migrate_rebert(src: ReBertModel, target: ReBertModel, config: ReBertConfig, src_kv_heads: int):
     with torch.no_grad():
-        target.embedding.load_state_dict(src.state_dict())
+        target.embedding.load_state_dict(src.embedding.state_dict())
         for src_l, target_l in zip(src.encoder.encoder_layers, target.encoder.encoder_layers):
             # Attention
             migrate_grouped_attention(src_l.attention, target_l.attention, config, src_kv_heads)
