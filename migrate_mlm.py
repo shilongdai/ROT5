@@ -9,7 +9,7 @@ from datasets import load_from_disk
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling, TrainingArguments, \
     Trainer, HfArgumentParser, AutoModelForMaskedLM
 
-from rebert.init_via_bert import load_transformers_base_bert, load_transformers_base_mlm
+from rebert.init_via_bert import load_transformers_base_bert, load_transformers_base_mlm, migrate_rebert
 from rebert.model import (ReBertConfig, ReBertForMaskedLM)
 
 
@@ -57,8 +57,12 @@ if __name__ == "__main__":
         max_length=max_length
     )
     rope_bert = ReBertForMaskedLM(config)
-    load_transformers_base_bert(src_model.base_model, rope_bert.rebert, config)
-    load_transformers_base_mlm(src_model.lm_head, rope_bert.mlm_head)
+    if src_model.config.model_type == "rebert":
+        migrate_rebert(src_model.rebert, rope_bert.rebert, config, src_model.config.num_key_value_heads)
+        rope_bert.mlm_head.load_state_dict(src_model.mlm_head.state_dict())
+    else:
+        load_transformers_base_bert(src_model.base_model, rope_bert.rebert, config)
+        load_transformers_base_mlm(src_model.lm_head, rope_bert.mlm_head)
     del src_model
     gc.collect()
 

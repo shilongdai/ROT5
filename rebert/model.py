@@ -8,6 +8,7 @@ from torch.nn import CrossEntropyLoss, MSELoss, BCEWithLogitsLoss
 from transformers import PretrainedConfig, PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutputWithPast, BaseModelOutputWithPooling, MaskedLMOutput, \
     SequenceClassifierOutput
+from transformers.models.bert.modeling_bert import BertPooler
 
 
 class ReBertConfig(PretrainedConfig):
@@ -25,6 +26,7 @@ class ReBertConfig(PretrainedConfig):
             hidden_dropout_prob=0.1,
             attention_probs_dropout_prob=0.1,
             layer_norm_eps=1e-12,
+            initializer_range=0.02,
             pad_token_id=1,
             bos_token_id=0,
             eos_token_id=2,
@@ -43,6 +45,7 @@ class ReBertConfig(PretrainedConfig):
         self.attention_probs_dropout_prob = attention_probs_dropout_prob
         self.layer_norm_eps = layer_norm_eps
         self.classifier_dropout = classifier_dropout
+        self.initializer_range = initializer_range
 
 
 def multihead_view(proj: torch.Tensor, heads, head_size, transpose=False):
@@ -134,17 +137,6 @@ class ReBertBaseMultiHeadAttention(nn.Module):
 
     def map_output(self, combined: torch.Tensor):
         return self.output_dropout(self.o_proj(combined))
-
-
-class FirstTokenPooler(nn.Module):
-
-    def __init__(self, config: ReBertConfig):
-        super().__init__()
-        self.pool_proj = nn.Linear(in_features=config.hidden_size, out_features=config.hidden_size)
-        self.pool_act = nn.Tanh()
-
-    def forward(self, seq: torch.Tensor):
-        return self.pool_act(self.pool_proj(seq[:, 0, :]))
 
 
 class ReBertEmbedding(nn.Module):
@@ -332,6 +324,22 @@ class ReBertPreTrainedModel(PreTrainedModel):
     supports_gradient_checkpointing = True
     _no_split_modules = ["ReBertEmbedding", "ReBertSelfAttention"]
 
+    def _init_weights(self, module):
+        """Initialize the weights."""
+        if isinstance(module, (nn.Linear,)):
+            # Slightly different from Mesh Transformer JAX which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+
 
 class ReBertModel(ReBertPreTrainedModel):
 
@@ -341,7 +349,7 @@ class ReBertModel(ReBertPreTrainedModel):
                                          config.layer_norm_eps, config.hidden_dropout_prob)
         self.encoder = ReBertEncoder(config)
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.pooler = FirstTokenPooler(config) if add_pooling_layer else None
+        self.pooler = BertPooler(config) if add_pooling_layer else None
         self.post_init()
 
     def forward(

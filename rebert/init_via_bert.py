@@ -49,7 +49,8 @@ def average_attention_head_biases(src_weight: torch.Tensor, size_per_head, num_h
     return output_weight.reshape(kv_group * size_per_head)
 
 
-def load_grouped_attention(tf_attention: RobertaAttention, rebert_attention: ReBertMultiHeadAttention, config: ReBertConfig):
+def load_grouped_attention(tf_attention: RobertaAttention, rebert_attention: ReBertMultiHeadAttention,
+                           config: ReBertConfig):
     size_per_head = config.hidden_size // config.num_attention_heads
     kv_head_group_size = config.num_attention_heads // config.num_key_value_heads
 
@@ -99,3 +100,50 @@ def load_transformers_base_mlm(tf_mlm: RobertaLMHead, mlm: ReBertLMHead):
         mlm.transform.weight.copy_(tf_mlm.dense.weight)
         mlm.transform.bias.copy_(tf_mlm.dense.bias)
         mlm.decoder.weight.copy_(tf_mlm.decoder.weight)
+
+
+def migrate_grouped_attention(src: ReBertMultiHeadAttention, target: ReBertMultiHeadAttention,
+                              config: ReBertConfig, src_kv_heads: int):
+    target.o_proj.load_state_dict(src.state_dict())
+    target.prelayer_norm.load_state_dict(src.prelayer_norm.state_dict())
+    target.self_attention.q_proj.load_state_dict(src.self_attention.q_proj.state_dict())
+
+    size_per_head = config.hidden_size // config.num_attention_heads
+    assert src_kv_heads % config.num_key_value_heads == 0
+    kv_head_group_size = src_kv_heads // config.num_key_value_heads
+
+    # Key
+    target.self_attention.k_proj.weight.copy_(
+        average_attention_head_weights(src.self_attention.k_proj.weight, size_per_head, src_kv_heads,
+                                       kv_head_group_size))
+    target.self_attention.k_proj.bias.copy_(
+        average_attention_head_biases(src.self_attention.k_proj.bias, size_per_head, src_kv_heads, kv_head_group_size))
+
+    # Value
+    target.self_attention.v_proj.weight.copy_(
+        average_attention_head_weights(src.self_attention.v_proj.weight, size_per_head, src_kv_heads,
+                                       kv_head_group_size))
+    target.self_attention.v_proj.bias.copy_(
+        average_attention_head_biases(src.self_attention.v_proj.bias, size_per_head, src_kv_heads, kv_head_group_size))
+
+
+def migrate_rebert(src: ReBertModel, target: ReBertModel, config: ReBertConfig, src_kv_heads: int):
+    with torch.no_grad():
+        target.embedding.load_state_dict(src.state_dict())
+        for src_l, target_l in zip(src.encoder.encoder_layers, target.encoder.encoder_layers):
+            # Attention
+            migrate_grouped_attention(src_l.attention, target_l.attention, config, src_kv_heads)
+
+            # Intermediate Linear
+            target_l.layer_norm.load_state_dict(src_l.layer_norm.state_dict())
+            target_l.intermediate_proj.load_state_dict(src_l.intermediate_proj.state_dict())
+
+            # Output Linear
+            target_l.out_proj.load_state_dict(src_l.out_proj.state_dict())
+        target.layer_norm.load_state_dict(src.layer_norm.state_dict())
+        try:
+            src_pooler = getattr(src, "pooler")
+            target_pooler = getattr(target, "pooler")
+            target_pooler.load_state_dict(src_pooler.state_dict())
+        except AttributeError:
+            pass
