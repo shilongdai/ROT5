@@ -6,9 +6,9 @@ import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss, BCEWithLogitsLoss
 from transformers import PretrainedConfig, PreTrainedModel
+from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask, _prepare_4d_attention_mask
 from transformers.modeling_outputs import BaseModelOutputWithPast, BaseModelOutputWithPooling, MaskedLMOutput, \
     SequenceClassifierOutput
-from transformers.models.bert.modeling_bert import BertPooler
 
 
 class ReBertConfig(PretrainedConfig):
@@ -75,13 +75,24 @@ class ReBertBaseSelfAttention(nn.Module):
 
     def forward(self, seq: torch.Tensor, mask: torch.Tensor, position_ids: torch.LongTensor = None,
                 output_attentions=False):
+        bsz, q_len, _ = seq.size()
+
         k_proj, q_proj, v_proj = self.map_kqv(seq, position_ids)
+        kv_seq_len = k_proj.shape[-2]
         k_proj = torch.repeat_interleave(k_proj, self.num_key_value_groups, dim=1)
         v_proj = torch.repeat_interleave(v_proj, self.num_key_value_groups, dim=1)
         k_proj = k_proj.transpose(2, 3)
+
         raw_scores = torch.matmul(q_proj, k_proj) / np.sqrt(q_proj.shape[-1])
-        masked_scores = raw_scores + mask
-        scaled_scores = torch.nn.functional.softmax(masked_scores, dim=-1)
+        if mask is not None:
+            if mask.size() != (bsz, 1, q_len, kv_seq_len):
+                raise ValueError(
+                    f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {mask.size()}"
+                )
+            masked_scores = raw_scores + mask
+        else:
+            masked_scores = raw_scores
+        scaled_scores = torch.nn.functional.softmax(masked_scores, dim=-1, dtype=torch.float32).to(q_proj.dtype)
         scaled_scores = self.attn_dropout(scaled_scores)
         results = torch.matmul(scaled_scores, v_proj).permute(0, 2, 1, 3)
         combined = results.reshape(seq.shape[0], seq.shape[1], -1)
@@ -318,6 +329,21 @@ class ReBertEncoder(nn.Module):
         )
 
 
+class ReBertPooler(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.activation = nn.Tanh()
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # We "pool" the model by simply taking the hidden state corresponding
+        # to the first token.
+        last_token = hidden_states[:, -1]
+        pooled_output = self.dense(last_token)
+        pooled_output = self.activation(pooled_output)
+        return pooled_output
+
+
 class ReBertPreTrainedModel(PreTrainedModel):
     config_class = ReBertConfig
     base_model_prefix = "rebert"
@@ -349,7 +375,7 @@ class ReBertModel(ReBertPreTrainedModel):
                                          config.layer_norm_eps, config.hidden_dropout_prob)
         self.encoder = ReBertEncoder(config)
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.pooler = BertPooler(config) if add_pooling_layer else None
+        self.pooler = ReBertPooler(config) if add_pooling_layer else None
         self.post_init()
 
     def forward(
@@ -369,11 +395,8 @@ class ReBertModel(ReBertPreTrainedModel):
 
         if input_ids is not None:
             self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
-        batch_size, seq_length = input_shape = input_ids.size()
-        device = input_ids.device
+        batch_size, seq_length = input_ids.size()
 
-        if attention_mask is None:
-            attention_mask = torch.ones((batch_size, seq_length), device=device)
         if position_ids is None:
             device = input_ids.device
             position_ids = torch.arange(
@@ -381,11 +404,11 @@ class ReBertModel(ReBertPreTrainedModel):
             )
             position_ids = position_ids.unsqueeze(0)
 
-        # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
-        # ourselves in which case we just need to make it broadcastable to all heads.
-        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape)
-
         embedding_output = self.embedding(input_ids)
+        if attention_mask is None:
+            attention_mask = torch.ones(batch_size, seq_length, dtype=torch.int, device=input_ids.device)
+        extended_attention_mask = _prepare_4d_attention_mask(attention_mask, embedding_output.dtype, seq_length)
+
         encoder_outputs = self.encoder(
             embedding_output,
             mask=extended_attention_mask,
@@ -432,13 +455,13 @@ class ReBertForMaskedLM(ReBertPreTrainedModel):
         self.post_init()
 
     def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+            self,
+            input_ids: Optional[torch.LongTensor] = None,
+            attention_mask: Optional[torch.FloatTensor] = None,
+            labels: Optional[torch.LongTensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
     ) -> Union[Tuple[torch.Tensor], MaskedLMOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):

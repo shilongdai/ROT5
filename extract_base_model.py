@@ -19,6 +19,7 @@ if __name__ == "__main__":
 
     mlm_model = AutoModelForMaskedLM.from_pretrained(script_args.model_path)
     tokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
+    tokenizer.add_eos_token = True
 
     core_model = getattr(mlm_model, script_args.component)
     core_model.save_pretrained(script_args.output_path)
