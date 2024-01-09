@@ -14,6 +14,7 @@ class ScriptArguments:
     eval_amt: Optional[float] = field(default=500)
     tokenizer_name: Optional[str] = field(default="roberta-base")
     text_field: Optional[str] = field(default="text")
+    pack: Optional[bool] = field(default=True)
     model_max_length: Optional[int] = field(default=512)
     chunk_overlaps: Optional[int] = field(default=0)
     cache_dir: Optional[str] = field(default="./transformers_cache")
@@ -25,7 +26,7 @@ def sliding_window(lst: List[Any], max_len: int, overlaps: int):
     return [lst[i:i + max_len] for i in range(0, max_len, max_len - overlaps)]
 
 
-def chunk_data(batch: Dict[str, List[Any]], tokenizer, max_seq=512, overlaps=256, text_field="text"):
+def chunk_data(batch: Dict[str, List[Any]], tokenizer, max_seq=512, overlaps=256, text_field="text", packing=True):
     tokenized_texts = tokenizer(batch[text_field], add_special_tokens=False)
     effective_len = max_seq
     if tokenizer.bos_token_id:
@@ -39,14 +40,6 @@ def chunk_data(batch: Dict[str, List[Any]], tokenizer, max_seq=512, overlaps=256
     working_ids = []
     working_mask = []
 
-    def add_special():
-        if tokenizer.bos_token_id:
-            working_ids.insert(0, tokenizer.bos_token_id)
-            working_mask.insert(0, 1)
-        if tokenizer.eos_token_id:
-            working_ids.append(tokenizer.eos_token_id)
-            working_mask.append(1)
-
     for i, _ in enumerate(batch[text_field]):
 
         if len(working_ids) > 0:
@@ -55,7 +48,7 @@ def chunk_data(batch: Dict[str, List[Any]], tokenizer, max_seq=512, overlaps=256
                 working_mask.append(1)
 
             # No need to add second EOS token if it's added above
-            if len(working_ids) == effective_len:
+            if len(working_ids) == effective_len or not packing:
                 if tokenizer.bos_token_id:
                     working_ids.insert(0, tokenizer.bos_token_id)
                     working_mask.insert(0, 1)
@@ -75,7 +68,9 @@ def chunk_data(batch: Dict[str, List[Any]], tokenizer, max_seq=512, overlaps=256
             working_mask.extend(window_mask)
 
             if len(working_ids) == effective_len:
-                add_special()
+                if tokenizer.bos_token_id:
+                    working_ids.insert(0, tokenizer.bos_token_id)
+                    working_mask.insert(0, 1)
                 result["input_ids"].append(working_ids)
                 result["attention_mask"].append(working_mask)
                 working_ids = []
@@ -88,8 +83,13 @@ def chunk_data(batch: Dict[str, List[Any]], tokenizer, max_seq=512, overlaps=256
 
     # Throw away if too short
     assert len(working_ids) <= effective_len
-    if len(working_ids) >= 32:
-        add_special()
+    if len(working_ids) >= 10:
+        if tokenizer.bos_token_id:
+            working_ids.insert(0, tokenizer.bos_token_id)
+            working_mask.insert(0, 1)
+        if tokenizer.eos_token_id:
+            working_ids.append(tokenizer.eos_token_id)
+            working_mask.append(1)
         result["input_ids"].append(working_ids)
         result["attention_mask"].append(working_mask)
 
@@ -118,6 +118,7 @@ if __name__ == "__main__":
     ds = ds.map(lambda batch: chunk_data(batch, tokenizer,
                                          max_seq=script_args.model_max_length,
                                          overlaps=script_args.chunk_overlaps,
+                                         packing=script_args.pack,
                                          text_field=script_args.text_field),
                 batched=True,
                 num_proc=8,

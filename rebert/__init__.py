@@ -1,8 +1,8 @@
-from transformers import AutoConfig, AutoModel, AutoModelForMaskedLM, AutoModelForSequenceClassification
+from transformers import AutoConfig, AutoModel, AutoModelForMaskedLM, AutoModelForSequenceClassification, \
+    AutoModelForSeq2SeqLM
 
-from rebert.model import ReBertConfig, ReBertModel, ReBertForMaskedLM, ReBertForSequenceClassification
+from rebert.model import ReBertConfig, ReBertForConditionalGeneration
 
 AutoConfig.register("rebert", ReBertConfig)
-AutoModel.register(ReBertConfig, ReBertModel)
-AutoModelForMaskedLM.register(ReBertConfig, ReBertForMaskedLM)
-AutoModelForSequenceClassification.register(ReBertConfig, ReBertForSequenceClassification)
+# AutoModel.register(ReBertConfig, ReBertModel)
+AutoModelForSeq2SeqLM.register(ReBertConfig, ReBertForConditionalGeneration)

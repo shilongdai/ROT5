@@ -5,10 +5,11 @@ from typing import Optional, cast
 import numpy as np
 import torch
 from datasets import load_from_disk
-from transformers import AutoTokenizer, DataCollatorForLanguageModeling, TrainingArguments, \
-    Trainer, HfArgumentParser, AutoModelForMaskedLM
+from transformers import AutoTokenizer, TrainingArguments, \
+    HfArgumentParser, AutoModelForSeq2SeqLM, Seq2SeqTrainingArguments, Seq2SeqTrainer, PreTrainedTokenizer
 
-from rebert.model import (ReBertConfig, ReBertForMaskedLM)
+from rebert.model import (ReBertConfig, ReBertForConditionalGeneration)
+from text_denoising import DataCollatorForUL2
 
 
 @dataclass
@@ -18,14 +19,15 @@ class ScriptArguments:
     dataset_path: Optional[str] = field(default="./data/mlm")
     train_name: Optional[str] = field(default="train")
     eval_name: Optional[str] = field(default="eval")
-    mlm_prob: Optional[float] = field(default=0.15)
+    eval_sample: Optional[int] = field(default=500)
+    sentinel_offset: Optional[int] = field(default=2)
     model_max_length: Optional[int] = field(default=512)
     cache_dir: Optional[str] = field(default="./transformers_cache")
     final_output_dir: Optional[str] = field(default="./best_migrated_model")
 
 
 if __name__ == "__main__":
-    parser = HfArgumentParser([TrainingArguments, ScriptArguments])
+    parser = HfArgumentParser([Seq2SeqTrainingArguments, ScriptArguments])
     train_args, script_args = parser.parse_args_into_dataclasses()
     train_args: TrainingArguments = cast(TrainingArguments, train_args)
     script_args: ScriptArguments = cast(ScriptArguments, script_args)
@@ -35,14 +37,15 @@ if __name__ == "__main__":
     torch.manual_seed(train_args.seed)
 
     if not script_args.model_path:
-        tokenizer = AutoTokenizer.from_pretrained(script_args.tokenizer_name)
+        tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(script_args.tokenizer_name)
+        tokenizer.padding_side = "right"
         if not tokenizer.pad_token_id:
             tokenizer.add_special_tokens({"pad_token": "[PAD]"})
             print(f"Added Pad Token: {tokenizer.pad_token_id}")
-        if not tokenizer.mask_token_id:
-            tokenizer.add_special_tokens({"mask_token": "[MASK]"})
-            print(f"Added Mask Token: {tokenizer.mask_token_id}")
-
+        tokenizer.add_special_tokens(
+            {"additional_special_tokens": ["[REBERT]"]})
+        sink_token = tokenizer.encode("[REBERT]", add_special_tokens=False)[0]
+        print(f"Added {tokenizer.decode(sink_token)}: {sink_token} as decoder start sink token")
         print(f"Final Vocab Size: {len(tokenizer)}")
         max_length = script_args.model_max_length
         config = ReBertConfig(
@@ -58,23 +61,37 @@ if __name__ == "__main__":
             hidden_act="gelu",
             hidden_dropout_prob=0.1,
             attention_probs_dropout_prob=0.1,
-            layer_norm_eps=1e-12,
+            layer_norm_eps=1e-6,
             classifier_dropout=0.1,
-            max_length=max_length
+            init_pos=max_length,
+            decoder_start_token_id=sink_token
         )
-        rope_bert = ReBertForMaskedLM(config)
+        rebert = ReBertForConditionalGeneration(config)
     else:
         tokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
-        rope_bert = AutoModelForMaskedLM.from_pretrained(script_args.model_path)
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=script_args.mlm_prob, mlm=True)
+        rebert = AutoModelForSeq2SeqLM.from_pretrained(script_args.model_path)
+        sink_token = rebert.config.decoder_start_token_id
+
+    if train_args.gradient_checkpointing:
+        rebert.config.use_cache = False
+
+    def sentinel_from_start(ids: np.ndarray, start_offset: int):
+        return ids + start_offset
+
+    data_collator = DataCollatorForUL2(tokenizer=tokenizer,
+                                       decoder_start_token_id=sink_token,
+                                       sentinel_map=lambda x: sentinel_from_start(x, script_args.sentinel_offset))
     print(f"Loading data from: {script_args.dataset_path}")
     ds = load_from_disk(script_args.dataset_path)
     train_set = ds[script_args.train_name]
     eval_set = None
     if script_args.eval_name in ds:
         eval_set = ds[script_args.eval_name]
-    trainer = Trainer(
-        model=rope_bert,
+        if len(eval_set) > script_args.eval_sample:
+            idx = np.random.choice(len(eval_set), script_args.eval_sample)
+            eval_set = eval_set.select(idx).flatten_indices()
+    trainer = Seq2SeqTrainer(
+        model=rebert,
         args=train_args,
         train_dataset=train_set,
         eval_dataset=eval_set,
