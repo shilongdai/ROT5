@@ -40,7 +40,7 @@ if __name__ == "__main__":
         tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(script_args.tokenizer_name, padding_side="right")
         for i in range(script_args.sentinel_tokens):
             tokenizer.add_special_tokens(
-                {"additional_special_tokens": [f"[MASK-{i}]"]})
+                {"additional_special_tokens": [f"[MASK-{script_args.sentinel_tokens - i - 1}]"]})
         print(f"Added {script_args.sentinel_tokens} MASK tokens")
         tokenizer.add_special_tokens(
             {"additional_special_tokens": ["[REBERT]"]})
