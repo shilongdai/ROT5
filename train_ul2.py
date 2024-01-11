@@ -20,8 +20,8 @@ class ScriptArguments:
     train_name: Optional[str] = field(default="train")
     eval_name: Optional[str] = field(default="eval")
     eval_sample: Optional[int] = field(default=500)
-    sentinel_offset: Optional[int] = field(default=2)
     model_max_length: Optional[int] = field(default=512)
+    sentinel_tokens: Optional[int] = field(default=500)
     cache_dir: Optional[str] = field(default="./transformers_cache")
     final_output_dir: Optional[str] = field(default="./best_migrated_model")
 
@@ -37,15 +37,18 @@ if __name__ == "__main__":
     torch.manual_seed(train_args.seed)
 
     if not script_args.model_path:
-        tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(script_args.tokenizer_name)
-        tokenizer.padding_side = "right"
-        if not tokenizer.pad_token_id:
-            tokenizer.add_special_tokens({"pad_token": "[PAD]"})
-            print(f"Added Pad Token: {tokenizer.pad_token_id}")
+        tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(script_args.tokenizer_name, padding_side="right")
+        for i in range(script_args.sentinel_tokens):
+            tokenizer.add_special_tokens(
+                {"additional_special_tokens": [f"[MASK-{i}]"]})
+        print(f"Added {script_args.sentinel_tokens} MASK tokens")
         tokenizer.add_special_tokens(
             {"additional_special_tokens": ["[REBERT]"]})
         sink_token = tokenizer.encode("[REBERT]", add_special_tokens=False)[0]
         print(f"Added {tokenizer.decode(sink_token)}: {sink_token} as decoder start sink token")
+        if not tokenizer.pad_token_id:
+            tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+            print(f"Added Pad Token: {tokenizer.pad_token_id}")
         print(f"Final Vocab Size: {len(tokenizer)}")
         max_length = script_args.model_max_length
         config = ReBertConfig(
@@ -75,12 +78,12 @@ if __name__ == "__main__":
     if train_args.gradient_checkpointing:
         rebert.config.use_cache = False
 
-    def sentinel_from_start(ids: np.ndarray, start_offset: int):
-        return ids + start_offset
+    def sentinel_from_end(ids: np.ndarray, max_bound: int):
+        return max_bound - ids
 
     data_collator = DataCollatorForUL2(tokenizer=tokenizer,
                                        decoder_start_token_id=sink_token,
-                                       sentinel_map=lambda x: sentinel_from_start(x, script_args.sentinel_offset))
+                                       sentinel_map=lambda x: sentinel_from_end(x, sink_token))
     print(f"Loading data from: {script_args.dataset_path}")
     ds = load_from_disk(script_args.dataset_path)
     train_set = ds[script_args.train_name]

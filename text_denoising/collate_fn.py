@@ -94,11 +94,14 @@ class DataCollatorForUL2(DataCollatorMixin):
             if self.tokenizer.padding_side == "left":
                 offsets = max_length - lengths
             sub_input_ids = input_ids[s_denoising_idx]
+            sub_offsets = offsets[s_denoising_idx]
+            sub_lengths = lengths[s_denoising_idx]
+
             _labels = np.zeros(shape=len(sub_input_ids), dtype=object)
             _input_ids = np.zeros(shape=len(sub_input_ids), dtype=object)
-            start = offsets
-            middle = offsets + torch.maximum(lengths // 2, torch.tensor(2))
-            end = offsets + lengths
+            start = sub_offsets
+            middle = sub_offsets + torch.maximum(sub_lengths // 2, torch.tensor(2))
+            end = sub_offsets + sub_lengths
             for i, (ids, s, m, e) in enumerate(zip(sub_input_ids, start, middle, end)):
                 _input_ids[i] = ids[s:m]
                 _labels[i] = ids[m:e]
