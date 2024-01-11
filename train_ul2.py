@@ -69,7 +69,7 @@ if __name__ == "__main__":
         rebert = ReBertForConditionalGeneration(config)
     else:
         tokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
-        rebert = AutoModelForSeq2SeqLM.from_pretrained(script_args.model_path)
+        rebert = ReBertForConditionalGeneration.from_pretrained(script_args.model_path)
         sink_token = rebert.config.decoder_start_token_id
 
     if train_args.gradient_checkpointing:
