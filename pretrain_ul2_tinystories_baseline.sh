@@ -1,6 +1,6 @@
 #!/bin/bash
 
- deepspeed train_ul2.py --output_dir="./t5_tinystories" --final_output_dir "./t5_tinystories_best" \
+ deepspeed train_ul2_baseline.py --output_dir="./t5_tinystories" --final_output_dir "./t5_tinystories_best" \
    --evaluation_strategy "steps" --per_device_train_batch_size 150 --per_device_eval_batch_size 150 \
    --gradient_accumulation_steps 1 \
    --learning_rate 0.0005 --num_train_epochs 1 --weight_decay 0.01 --warmup_ratio 0.01 --lr_scheduler_type "linear" \

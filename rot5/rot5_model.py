@@ -158,9 +158,10 @@ class ROT5Attention(nn.Module):
 
         self.gradient_checkpointing = False
 
-    def adjust_proj_rope(self, proj, length):
+    def adjust_proj_rope(self, proj, length, offset):
         cos, sin = self.rope(proj, length=length)
-        roped = self.rope.apply_embedding(proj, cos, sin, torch.arange(length, dtype=torch.long, device=proj.device))
+        pos_ids = torch.arange(offset, length, dtype=torch.long, device=proj.device).unsqueeze(0)
+        roped = self.rope.apply_embedding(proj, cos, sin, pos_ids)
         return roped
 
     def forward(
@@ -183,13 +184,15 @@ class ROT5Attention(nn.Module):
         batch_size, seq_length = hidden_states.shape[:2]
 
         real_seq_length = seq_length
+        past_length = 0
 
         if past_key_value is not None:
             if len(past_key_value) != 2:
                 raise ValueError(
                     f"past_key_value should have 2 past states: keys and values. Got {len(past_key_value)} past states"
                 )
-            real_seq_length += past_key_value[0].shape[2] if query_length is None else query_length
+            past_length = past_key_value[0].shape[2] if query_length is None else query_length
+            real_seq_length += past_length
 
         key_length = real_seq_length if key_value_states is None else key_value_states.shape[1]
 
@@ -240,8 +243,8 @@ class ROT5Attention(nn.Module):
         )
 
         # Apply Rope
-        query_states = self.adjust_proj_rope(query_states, real_seq_length)
-        key_states = self.adjust_proj_rope(key_states, key_length)
+        query_states = self.adjust_proj_rope(query_states, real_seq_length, past_length)
+        key_states = self.adjust_proj_rope(key_states, key_length, 0)
 
         # compute scores
         scores = torch.matmul(
@@ -572,7 +575,7 @@ class ROT5Stack(ROT5PreTrainedModel):
 
         self.rope = ROPEEmbedding(d_model=config.d_kv, max_seq=512)
         self.block = nn.ModuleList(
-            [ROT5Block(config, self.rope) for i in range(config.num_layers)]
+            [ROT5Block(config, self.rope) for _ in range(config.num_layers)]
         )
         self.final_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
