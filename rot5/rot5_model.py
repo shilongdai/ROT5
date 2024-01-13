@@ -570,7 +570,7 @@ class ROT5Stack(ROT5PreTrainedModel):
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
 
-        self.rope = ROPEEmbedding(d_model=config.d_model, max_seq=512)
+        self.rope = ROPEEmbedding(d_model=config.d_kv, max_seq=512)
         self.block = nn.ModuleList(
             [ROT5Block(config, self.rope) for i in range(config.num_layers)]
         )
