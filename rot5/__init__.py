@@ -1,5 +1,4 @@
-from transformers import AutoConfig, AutoModel, AutoModelForMaskedLM, AutoModelForSequenceClassification, \
-    AutoModelForSeq2SeqLM
+from transformers import AutoConfig, AutoModel, AutoModelForSeq2SeqLM
 
 from .rot5_model import ROT5Config, ROT5ForConditionalGeneration
 
