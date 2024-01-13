@@ -59,8 +59,10 @@ if __name__ == "__main__":
         num_heads=12,
         feed_forward_proj="gelu",
         pad_token_id=tokenizer.pad_token_id,
-        eos_token_id=tokenizer.eos_token_id
+        eos_token_id=tokenizer.eos_token_id,
+        decoder_start_token_id=sink_token
     )
+    print(f"Decoder Start ID set to {config.decoder_start_token_id}")
     t5 = T5ForConditionalGeneration(config)
 
     if train_args.gradient_checkpointing:
