@@ -6,10 +6,9 @@ import numpy as np
 import torch
 from datasets import load_from_disk
 from transformers import AutoTokenizer, TrainingArguments, \
-    HfArgumentParser, AutoModelForSeq2SeqLM, Seq2SeqTrainingArguments, Seq2SeqTrainer, PreTrainedTokenizer, T5Config, \
+    HfArgumentParser, Seq2SeqTrainingArguments, Seq2SeqTrainer, PreTrainedTokenizer, T5Config, \
     T5ForConditionalGeneration
 
-from rebert.model import (ReBertConfig, ReBertForConditionalGeneration)
 from text_denoising import DataCollatorForUL2
 
 

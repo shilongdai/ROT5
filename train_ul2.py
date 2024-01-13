@@ -6,9 +6,9 @@ import numpy as np
 import torch
 from datasets import load_from_disk
 from transformers import AutoTokenizer, TrainingArguments, \
-    HfArgumentParser, AutoModelForSeq2SeqLM, Seq2SeqTrainingArguments, Seq2SeqTrainer, PreTrainedTokenizer
+    HfArgumentParser, Seq2SeqTrainingArguments, Seq2SeqTrainer, PreTrainedTokenizer
 
-from rebert.model import (ReBertConfig, ReBertForConditionalGeneration)
+from rot5 import (ROT5Config, ROT5ForConditionalGeneration)
 from text_denoising import DataCollatorForUL2
 
 
@@ -51,35 +51,31 @@ if __name__ == "__main__":
             print(f"Added Pad Token: {tokenizer.pad_token_id}")
         print(f"Final Vocab Size: {len(tokenizer)}")
         max_length = script_args.model_max_length
-        config = ReBertConfig(
-            pad_token_id=tokenizer.pad_token_id,
-            bos_token_id=tokenizer.bos_token_id,
-            eos_token_id=tokenizer.eos_token_id,
+        config = ROT5Config(
             vocab_size=len(tokenizer),
-            hidden_size=768,
-            num_hidden_layers=12,
-            num_attention_heads=12,
-            num_key_value_heads=12,
-            intermediate_size=3072,
-            hidden_act="gelu",
-            hidden_dropout_prob=0.1,
-            attention_probs_dropout_prob=0.1,
-            layer_norm_eps=1e-6,
-            classifier_dropout=0.1,
-            init_pos=max_length,
+            d_model=768,
+            d_ff=3072,
+            d_kv=64,
+            num_layers=12,
+            num_heads=12,
+            feed_forward_proj="gelu",
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
             decoder_start_token_id=sink_token
         )
-        rebert = ReBertForConditionalGeneration(config)
+        rot5 = ROT5ForConditionalGeneration(config)
     else:
         tokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
-        rebert = ReBertForConditionalGeneration.from_pretrained(script_args.model_path)
-        sink_token = rebert.config.decoder_start_token_id
+        rot5 = ROT5ForConditionalGeneration.from_pretrained(script_args.model_path)
+        sink_token = rot5.config.decoder_start_token_id
 
     if train_args.gradient_checkpointing:
-        rebert.config.use_cache = False
+        rot5.config.use_cache = False
+
 
     def sentinel_from_end(ids: np.ndarray, max_bound: int):
         return max_bound - ids
+
 
     data_collator = DataCollatorForUL2(tokenizer=tokenizer,
                                        decoder_start_token_id=sink_token,
@@ -94,7 +90,7 @@ if __name__ == "__main__":
             idx = np.random.choice(len(eval_set), script_args.eval_sample)
             eval_set = eval_set.select(idx).flatten_indices()
     trainer = Seq2SeqTrainer(
-        model=rebert,
+        model=rot5,
         args=train_args,
         train_dataset=train_set,
         eval_dataset=eval_set,
