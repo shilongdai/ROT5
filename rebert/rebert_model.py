@@ -602,7 +602,7 @@ class ReBertStack(ReBertPreTrainedModel):
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
         if self.is_decoder and encoder_hidden_states is not None:
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-            encoder_hidden_shape = (encoder_batch_size, 1, encoder_sequence_length, encoder_sequence_length)
+            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
                 encoder_attention_mask = torch.ones(
                     encoder_hidden_shape, device=inputs_embeds.device, dtype=torch.long
