@@ -40,6 +40,7 @@ class ROT5Config(PretrainedConfig):
             num_layers=6,
             num_decoder_layers=None,
             num_heads=8,
+            num_key_value_heads=4,
             dropout_rate=0.1,
             layer_norm_epsilon=1e-6,
             initializer_factor=1.0,
@@ -60,6 +61,7 @@ class ROT5Config(PretrainedConfig):
             num_decoder_layers if num_decoder_layers is not None else self.num_layers
         )  # default = symmetry
         self.num_heads = num_heads
+        self.num_key_value_heads = num_key_value_heads
         self.dropout_rate = dropout_rate
         self.classifier_dropout = classifier_dropout
         self.layer_norm_epsilon = layer_norm_epsilon
@@ -148,6 +150,8 @@ class ROT5Attention(nn.Module):
         self.n_heads = config.num_heads
         self.dropout = config.dropout_rate
         self.inner_dim = self.n_heads * self.key_value_proj_dim
+        self.num_key_value_heads = config.num_key_value_heads
+        self.num_key_value_groups = self.heads // self.num_key_value_heads
 
         # Mesh TensorFlow initialization to avoid scaling before softmax
         self.q = nn.Linear(self.d_model, self.inner_dim, bias=False)
@@ -245,6 +249,10 @@ class ROT5Attention(nn.Module):
         # Apply Rope
         query_states = self.adjust_proj_rope(query_states, real_seq_length, past_length)
         key_states = self.adjust_proj_rope(key_states, key_length, 0)
+
+        # Apply GQA
+        key_states = torch.repeat_interleave(key_states, self.num_key_value_groups, dim=1)
+        value_states = torch.repeat_interleave(value_states, self.num_key_value_groups, dim=1)
 
         # compute scores
         scores = torch.matmul(

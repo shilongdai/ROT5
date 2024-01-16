@@ -22,6 +22,7 @@ class ScriptArguments:
     eval_sample: Optional[int] = field(default=500)
     model_max_length: Optional[int] = field(default=512)
     sentinel_tokens: Optional[int] = field(default=500)
+    kv_heads: Optional[int] = field(default=12)
     cache_dir: Optional[str] = field(default="./transformers_cache")
     final_output_dir: Optional[str] = field(default="./best_migrated_model")
 
@@ -58,6 +59,7 @@ if __name__ == "__main__":
             d_kv=64,
             num_layers=12,
             num_heads=12,
+            num_key_value_heads=script_args.kv_heads,
             feed_forward_proj="gelu",
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
