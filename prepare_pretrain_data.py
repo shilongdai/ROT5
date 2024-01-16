@@ -4,6 +4,10 @@ from typing import Optional, cast, List, Any, Dict
 from datasets import load_dataset, DatasetDict
 from transformers import AutoTokenizer, HfArgumentParser, PreTrainedTokenizer
 
+import random
+import numpy as np
+import torch
+
 
 @dataclass
 class ScriptArguments:
@@ -19,7 +23,7 @@ class ScriptArguments:
     chunk_overlaps: Optional[int] = field(default=0)
     cache_dir: Optional[str] = field(default="./transformers_cache")
     final_output_dir: Optional[str] = field(default="./data/pretrain")
-    seed: Optional[str] = field(default=42)
+    seed: Optional[int] = field(default=42)
 
 
 def sliding_window(lst: List[Any], max_len: int, overlaps: int):
@@ -83,11 +87,15 @@ if __name__ == "__main__":
     script_args = parser.parse_args_into_dataclasses()[0]
     script_args: ScriptArguments = cast(ScriptArguments, script_args)
 
+    random.seed(script_args.seed)
+    np.random.seed(script_args.seed)
+    torch.manual_seed(script_args.seed)
+
     tokenizer = AutoTokenizer.from_pretrained(script_args.tokenizer_name, cache_dir=script_args.cache_dir)
     ds = load_dataset(script_args.dataset_path, script_args.dataset_subset, split=script_args.dataset_split,
                       cache_dir=script_args.cache_dir)
     if script_args.dataset_split:
-        ds = ds.train_test_split(test_size=script_args.eval_amt)
+        ds = ds.train_test_split(test_size=script_args.eval_amt, seed=script_args.seed)
         ds = DatasetDict({
             "train": ds["train"],
             "validation": ds["test"]
