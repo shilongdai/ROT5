@@ -155,8 +155,8 @@ class ROT5Attention(nn.Module):
 
         # Mesh TensorFlow initialization to avoid scaling before softmax
         self.q = nn.Linear(self.d_model, self.inner_dim, bias=False)
-        self.k = nn.Linear(self.d_model, self.inner_dim, bias=False)
-        self.v = nn.Linear(self.d_model, self.inner_dim, bias=False)
+        self.k = nn.Linear(self.d_model, self.num_key_value_heads * self.key_value_proj_dim, bias=False)
+        self.v = nn.Linear(self.d_model, self.num_key_value_heads * self.key_value_proj_dim, bias=False)
         self.o = nn.Linear(self.inner_dim, self.d_model, bias=False)
         self.rope = rope
 
