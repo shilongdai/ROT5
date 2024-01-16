@@ -246,13 +246,13 @@ class ROT5Attention(nn.Module):
             hidden_states, self.v, key_value_states, past_key_value[1] if past_key_value is not None else None
         )
 
-        # Apply Rope
-        query_states = self.adjust_proj_rope(query_states, real_seq_length, past_length)
-        key_states = self.adjust_proj_rope(key_states, key_length, 0)
-
         # Apply GQA
         key_states = torch.repeat_interleave(key_states, self.num_key_value_groups, dim=1)
         value_states = torch.repeat_interleave(value_states, self.num_key_value_groups, dim=1)
+
+        # Apply Rope
+        query_states = self.adjust_proj_rope(query_states, real_seq_length, past_length)
+        key_states = self.adjust_proj_rope(key_states, key_length, 0)
 
         # compute scores
         scores = torch.matmul(
