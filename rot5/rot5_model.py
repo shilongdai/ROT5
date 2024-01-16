@@ -151,7 +151,7 @@ class ROT5Attention(nn.Module):
         self.dropout = config.dropout_rate
         self.inner_dim = self.n_heads * self.key_value_proj_dim
         self.num_key_value_heads = config.num_key_value_heads
-        self.num_key_value_groups = self.heads // self.num_key_value_heads
+        self.num_key_value_groups = self.n_heads // self.num_key_value_heads
 
         # Mesh TensorFlow initialization to avoid scaling before softmax
         self.q = nn.Linear(self.d_model, self.inner_dim, bias=False)
