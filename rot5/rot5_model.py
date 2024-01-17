@@ -140,6 +140,14 @@ class ROPEEmbedding(nn.Module):
         return roped
 
 
+def multihead_view(proj: torch.Tensor, heads, head_size, transpose=False):
+    proj_view = proj.view(proj.shape[0], proj.shape[1], heads, head_size)
+    if not transpose:
+        return proj_view.permute(0, 2, 1, 3)
+    else:
+        return proj_view.permute(0, 2, 3, 1)
+
+
 class ROT5Attention(nn.Module):
 
     def __init__(self, config: ROT5Config, rope: ROPEEmbedding):
@@ -200,10 +208,6 @@ class ROT5Attention(nn.Module):
 
         key_length = real_seq_length if key_value_states is None else key_value_states.shape[1]
 
-        def shape(states):
-            """projection"""
-            return states.view(batch_size, -1, self.n_heads, self.key_value_proj_dim).transpose(1, 2)
-
         def unshape(states):
             """reshape"""
             return states.transpose(1, 2).contiguous().view(batch_size, -1, self.inner_dim)
@@ -213,11 +217,13 @@ class ROT5Attention(nn.Module):
             if key_value_states is None:
                 # self-attn
                 # (batch_size, n_heads, seq_length, dim_per_head)
-                hidden_states = shape(proj_layer(hidden_states))
+                hidden_states = multihead_view(proj_layer(hidden_states),
+                                               self.num_key_value_heads, self.key_value_proj_dim)
             elif past_key_value is None:
                 # cross-attn
                 # (batch_size, n_heads, seq_length, dim_per_head)
-                hidden_states = shape(proj_layer(key_value_states))
+                hidden_states = multihead_view(proj_layer(key_value_states),
+                                               self.num_key_value_heads, self.key_value_proj_dim)
 
             if past_key_value is not None:
                 if key_value_states is None:
@@ -229,14 +235,17 @@ class ROT5Attention(nn.Module):
                     # the provided `key_value_states` to support prefix tuning
                     # cross-attn
                     # (batch_size, n_heads, seq_length, dim_per_head)
-                    hidden_states = shape(proj_layer(key_value_states))
+                    hidden_states = multihead_view(proj_layer(key_value_states),
+                                                   self.num_key_value_heads, self.key_value_proj_dim)
                 else:
                     # cross-attn
                     hidden_states = past_key_value
             return hidden_states
 
         # get query states
-        query_states = shape(self.q(hidden_states))  # (batch_size, n_heads, seq_length, dim_per_head)
+        # (batch_size, n_heads, seq_length, dim_per_head)
+        query_states = multihead_view(self.q(hidden_states),
+                                      self.n_heads, self.key_value_proj_dim)
 
         # get key/value states
         key_states = project(
