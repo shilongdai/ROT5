@@ -381,7 +381,6 @@ class ROT5SparseMoeBlock(nn.Module):
 
         # gating
         self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False)
-
         self.experts = nn.ModuleList([T5LayerFF(config) for _ in range(self.num_experts)])
 
     def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -631,6 +630,8 @@ class ROT5PreTrainedModel(PreTrainedModel):
             module.k.weight.data.normal_(mean=0.0, std=factor * (d_model ** -0.5))
             module.v.weight.data.normal_(mean=0.0, std=factor * (d_model ** -0.5))
             module.o.weight.data.normal_(mean=0.0, std=factor * ((n_heads * key_value_proj_dim) ** -0.5))
+        elif isinstance(module, ROT5SparseMoeBlock):
+            module.gate.weight.data.normal_(mean=0.0, std=factor * 1)
 
     def _shift_right(self, input_ids):
         decoder_start_token_id = self.config.decoder_start_token_id
