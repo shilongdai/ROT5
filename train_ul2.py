@@ -23,6 +23,8 @@ class ScriptArguments:
     model_max_length: Optional[int] = field(default=512)
     sentinel_tokens: Optional[int] = field(default=500)
     kv_heads: Optional[int] = field(default=12)
+    num_experts: Optional[int] = field(default=1)
+    topk_experts: Optional[int] = field(default=1)
     cache_dir: Optional[str] = field(default="./transformers_cache")
     final_output_dir: Optional[str] = field(default="./best_migrated_model")
 
@@ -61,6 +63,8 @@ if __name__ == "__main__":
             num_heads=12,
             num_key_value_heads=script_args.kv_heads,
             feed_forward_proj="gelu",
+            num_local_experts=script_args.num_experts,
+            num_experts_per_tok=script_args.topk_experts,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
             decoder_start_token_id=sink_token

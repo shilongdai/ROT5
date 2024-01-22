@@ -428,10 +428,10 @@ class ROT5SparseMoeBlock(nn.Module):
             # the `top_x` tensor here.
             final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-        return final_hidden_states, router_logits
+        return final_hidden_states
 
 class ROT5Block(nn.Module):
-    def __init__(self, config, rope: ROPEEmbedding):
+    def __init__(self, config: ROT5Config, rope: ROPEEmbedding):
         super().__init__()
         self.is_decoder = config.is_decoder
         self.layer = nn.ModuleList()
@@ -439,7 +439,10 @@ class ROT5Block(nn.Module):
         if self.is_decoder:
             self.layer.append(ROT5LayerCrossAttention(config, rope))
 
-        self.layer.append(ROT5SparseMoeBlock(config))
+        if config.num_local_experts == 1:
+            self.layer.append(T5LayerFF(config))
+        else:
+            self.layer.append(ROT5SparseMoeBlock(config))
 
     def forward(
             self,
@@ -529,7 +532,7 @@ class ROT5Block(nn.Module):
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
 
         # Apply Feed Forward layer
-        hidden_states = self.layer[-1](hidden_states)[0]
+        hidden_states = self.layer[-1](hidden_states)
 
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16:
