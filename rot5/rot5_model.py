@@ -44,6 +44,8 @@ class ROT5Config(PretrainedConfig):
             dropout_rate=0.1,
             layer_norm_epsilon=1e-6,
             initializer_factor=1.0,
+            num_local_experts=8,
+            num_experts_per_tok=1,
             feed_forward_proj="gelu",
             is_encoder_decoder=True,
             use_cache=True,
@@ -66,6 +68,8 @@ class ROT5Config(PretrainedConfig):
         self.classifier_dropout = classifier_dropout
         self.layer_norm_epsilon = layer_norm_epsilon
         self.initializer_factor = initializer_factor
+        self.num_local_experts = num_local_experts
+        self.num_experts_per_tok = num_experts_per_tok
         self.feed_forward_proj = feed_forward_proj
         self.use_cache = use_cache
 
@@ -356,6 +360,76 @@ class ROT5LayerCrossAttention(nn.Module):
         return outputs
 
 
+class ROT5SparseMoeBlock(nn.Module):
+    """
+    This implementation is
+    strictly equivalent to standard MoE with full capacity (no
+    dropped tokens). It's faster since it formulates MoE operations
+    in terms of block-sparse operations to accomodate imbalanced
+    assignments of tokens to experts, whereas standard MoE either
+    (1) drop tokens at the cost of reduced performance or (2) set
+    capacity factor to number of experts and thus waste computation
+    and memory on padding.
+    """
+
+    def __init__(self, config: ROT5Config):
+        super().__init__()
+        self.hidden_dim = config.d_model
+        self.ffn_dim = config.d_ff
+        self.num_experts = config.num_local_experts
+        self.top_k = config.num_experts_per_tok
+
+        # gating
+        self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False)
+
+        self.experts = nn.ModuleList([T5LayerFF(config) for _ in range(self.num_experts)])
+
+    def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """ """
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        hidden_states = hidden_states.view(-1, hidden_dim)
+        # router_logits: (batch * sequence_length, n_experts)
+        router_logits = self.gate(hidden_states)
+
+        routing_weights = torch.nn.functional.softmax(router_logits, dim=1, dtype=torch.float)
+        routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+        routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
+        # we cast back to the input dtype
+        routing_weights = routing_weights.to(hidden_states.dtype)
+
+        final_hidden_states = torch.zeros(
+            (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
+        )
+
+        # One hot encode the selected experts to create an expert mask
+        # this will be used to easily index which expert is going to be sollicitated
+        expert_mask = torch.nn.functional.one_hot(selected_experts,
+                                                  num_classes=self.num_experts).permute(2, 1, 0)
+
+        # Loop over all available experts in the model and perform the computation on each expert
+        for expert_idx in range(self.num_experts):
+            expert_layer = self.experts[expert_idx]
+            idx, top_x = torch.where(expert_mask[expert_idx])
+
+            if top_x.shape[0] == 0:
+                continue
+
+            # in torch it is faster to index using lists than torch tensors
+            top_x_list = top_x.tolist()
+            idx_list = idx.tolist()
+
+            # Index the correct hidden states and compute the expert hidden state for
+            # the current expert. We need to make sure to multiply the output hidden
+            # states by `routing_weights` on the corresponding tokens (top-1 and top-2)
+            current_state = hidden_states[None, top_x_list].reshape(-1, hidden_dim)
+            current_hidden_states = expert_layer(current_state) * routing_weights[top_x_list, idx_list, None]
+
+            # However `index_add_` only support torch tensors for indexing so we'll use
+            # the `top_x` tensor here.
+            final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
+        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+        return final_hidden_states, router_logits
+
 class ROT5Block(nn.Module):
     def __init__(self, config, rope: ROPEEmbedding):
         super().__init__()
@@ -365,7 +439,7 @@ class ROT5Block(nn.Module):
         if self.is_decoder:
             self.layer.append(ROT5LayerCrossAttention(config, rope))
 
-        self.layer.append(T5LayerFF(config))
+        self.layer.append(ROT5SparseMoeBlock(config))
 
     def forward(
             self,
@@ -455,7 +529,7 @@ class ROT5Block(nn.Module):
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
 
         # Apply Feed Forward layer
-        hidden_states = self.layer[-1](hidden_states)
+        hidden_states = self.layer[-1](hidden_states)[0]
 
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16:
