@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers import PretrainedConfig
+from transformers.activations import ACT2FN
 from transformers.modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPastAndCrossAttentions,
@@ -360,6 +361,28 @@ class ROT5LayerCrossAttention(nn.Module):
         return outputs
 
 
+class ROT5MOEDenseActDense(nn.Module):
+    def __init__(self, config: ROT5Config):
+        super().__init__()
+        self.wi = nn.Linear(config.d_model, config.d_ff, bias=False)
+        self.wo = nn.Linear(config.d_ff, config.d_model, bias=False)
+        self.dropout = nn.Dropout(config.dropout_rate)
+        self.act = ACT2FN[config.dense_act_fn]
+
+    def forward(self, hidden_states):
+        hidden_states = self.wi(hidden_states)
+        hidden_states = self.act(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        if (
+            isinstance(self.wo.weight, torch.Tensor)
+            and hidden_states.dtype != self.wo.weight.dtype
+            and self.wo.weight.dtype != torch.int8
+        ):
+            hidden_states = hidden_states.to(self.wo.weight.dtype)
+        hidden_states = self.wo(hidden_states)
+        return hidden_states
+
+
 class ROT5SparseMoeBlock(nn.Module):
     """
     This implementation is
@@ -381,7 +404,7 @@ class ROT5SparseMoeBlock(nn.Module):
 
         # gating
         self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False)
-        self.experts = nn.ModuleList([T5LayerFF(config) for _ in range(self.num_experts)])
+        self.experts = nn.ModuleList([ROT5MOEDenseActDense(config) for _ in range(self.num_experts)])
 
     def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """ """
@@ -429,6 +452,22 @@ class ROT5SparseMoeBlock(nn.Module):
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
         return final_hidden_states
 
+
+class ROT5MOELayerFF(nn.Module):
+
+    def __init__(self, config: ROT5Config):
+        super().__init__()
+        self.mlp = ROT5SparseMoeBlock(config)
+        self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.dropout = nn.Dropout(config.dropout_rate)
+
+    def forward(self, hidden_states):
+        forwarded_states = self.layer_norm(hidden_states)
+        forwarded_states = self.mlp(forwarded_states)
+        output = hidden_states + self.dropout(forwarded_states)
+        return output
+
+
 class ROT5Block(nn.Module):
     def __init__(self, config: ROT5Config, rope: ROPEEmbedding):
         super().__init__()
@@ -441,7 +480,7 @@ class ROT5Block(nn.Module):
         if config.num_local_experts == 1:
             self.layer.append(T5LayerFF(config))
         else:
-            self.layer.append(ROT5SparseMoeBlock(config))
+            self.layer.append(ROT5MOELayerFF(config))
 
     def forward(
             self,
