@@ -54,6 +54,9 @@ if __name__ == "__main__":
             print(f"Added Pad Token: {tokenizer.pad_token_id}")
         print(f"Final Vocab Size: {len(tokenizer)}")
         max_length = script_args.model_max_length
+        output_router = False
+        if script_args.num_experts > 1:
+            output_router = True
         config = ROT5Config(
             vocab_size=len(tokenizer),
             d_model=768,
@@ -65,6 +68,7 @@ if __name__ == "__main__":
             feed_forward_proj="gelu",
             num_local_experts=script_args.num_experts,
             num_experts_per_tok=script_args.topk_experts,
+            output_router_logits=output_router,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
             decoder_start_token_id=sink_token

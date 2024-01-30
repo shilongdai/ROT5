@@ -8,10 +8,8 @@ from torch.nn import CrossEntropyLoss
 from transformers import PretrainedConfig
 from transformers.activations import ACT2FN
 from transformers.modeling_outputs import (
-    BaseModelOutput,
-    BaseModelOutputWithPastAndCrossAttentions,
-    Seq2SeqLMOutput,
-    Seq2SeqModelOutput,
+    MoEModelOutputWithPastAndCrossAttentions, Seq2SeqMoEModelOutput, MoEModelOutput,
+    Seq2SeqMoEOutput,
 )
 from transformers.modeling_utils import PreTrainedModel
 from transformers.models.t5.modeling_t5 import T5LayerNorm, T5LayerFF, load_tf_weights_in_t5, T5ClassificationHead, \
@@ -47,6 +45,9 @@ class ROT5Config(PretrainedConfig):
             initializer_factor=1.0,
             num_local_experts=8,
             num_experts_per_tok=1,
+            router_z_loss_coef=0.001,
+            router_aux_loss_coef=0.001,
+            output_router_logits=False,
             feed_forward_proj="gelu",
             is_encoder_decoder=True,
             use_cache=True,
@@ -71,6 +72,9 @@ class ROT5Config(PretrainedConfig):
         self.initializer_factor = initializer_factor
         self.num_local_experts = num_local_experts
         self.num_experts_per_tok = num_experts_per_tok
+        self.router_z_loss_coef = router_z_loss_coef,
+        self.router_aux_loss_coef=router_aux_loss_coef
+        self.output_router_logits = output_router_logits
         self.feed_forward_proj = feed_forward_proj
         self.use_cache = use_cache
 
@@ -406,7 +410,32 @@ class ROT5SparseMoeBlock(nn.Module):
         self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False)
         self.experts = nn.ModuleList([ROT5MOEDenseActDense(config) for _ in range(self.num_experts)])
 
-    def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return self.forward_dense(hidden_states)
+
+    def forward_dense(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        hidden_states = hidden_states.view(-1, hidden_dim)
+        # router_logits: (batch * sequence_length, n_experts)
+        router_logits = self.gate(hidden_states)
+
+        routing_weights = torch.nn.functional.softmax(router_logits, dim=1, dtype=torch.float)
+        topk_weight, topk_idx = torch.topk(routing_weights, self.top_k, dim=-1, sorted=False)
+        topk_weight /= topk_weight.sum(dim=-1, keepdim=True)
+        # we cast back to the input dtype
+        topk_weight = topk_weight.to(hidden_states.dtype)
+
+        hidden_states = hidden_states.repeat_interleave(self.top_k, dim=0)
+        y = torch.empty_like(hidden_states)
+        flat_topk_idx = topk_idx.view(-1)
+        for i in range(self.num_experts):
+            expert = self.experts[i]
+            y[flat_topk_idx == i] = expert(hidden_states[flat_topk_idx == i])
+        y = (y.view(*topk_weight.shape, -1) * topk_weight.unsqueeze(-1)).sum(dim=1)
+        final_hidden_states = y.reshape(batch_size, sequence_length, hidden_dim)
+        return final_hidden_states
+
+    def forward_sparse(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """ """
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
@@ -450,7 +479,7 @@ class ROT5SparseMoeBlock(nn.Module):
             # the `top_x` tensor here.
             final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-        return final_hidden_states
+        return final_hidden_states, router_logits
 
 
 class ROT5MOELayerFF(nn.Module):
@@ -463,9 +492,9 @@ class ROT5MOELayerFF(nn.Module):
 
     def forward(self, hidden_states):
         forwarded_states = self.layer_norm(hidden_states)
-        forwarded_states = self.mlp(forwarded_states)
+        forwarded_states, router_logits = self.mlp(forwarded_states)
         output = hidden_states + self.dropout(forwarded_states)
-        return output
+        return output, router_logits
 
 
 class ROT5Block(nn.Module):
@@ -493,6 +522,7 @@ class ROT5Block(nn.Module):
             past_key_value=None,
             use_cache=False,
             output_attentions=False,
+            output_router_logits: Optional[bool] = False,
             return_dict=True,
     ):
         if past_key_value is not None:
@@ -570,7 +600,12 @@ class ROT5Block(nn.Module):
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
 
         # Apply Feed Forward layer
-        hidden_states = self.layer[-1](hidden_states)
+        ff_output = self.layer[-1](hidden_states)
+        if isinstance(self.layer[-1], ROT5MOELayerFF):
+            hidden_states, router_logits = ff_output
+        else:
+            hidden_states = ff_output
+            router_logits = None
 
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16:
@@ -588,7 +623,110 @@ class ROT5Block(nn.Module):
         else:
             outputs = outputs + attention_outputs
 
-        return outputs  # hidden-states, present_key_value_states, (self-attention weights), (cross-attention weights)
+        if output_router_logits:
+            outputs = outputs + (router_logits, )
+
+        # hidden-states, present_key_value_states, (self-attention weights), (cross-attention weights), router_logits
+        return outputs
+
+
+def load_balancing_loss_func(
+    gate_logits: torch.Tensor, num_experts: torch.Tensor = None, top_k=2, attention_mask: Optional[torch.Tensor] = None
+) -> float:
+    r"""
+    Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
+
+    See Switch Transformer (https://arxiv.org/abs/2101.03961) for more details. This function implements the loss
+    function presented in equations (4) - (6) of the paper. It aims at penalizing cases where the routing between
+    experts is too unbalanced.
+
+    Args:
+        gate_logits (Union[`torch.Tensor`, Tuple[torch.Tensor]):
+            Logits from the `gate`, should be a tuple of model.config.num_hidden_layers tensors of
+            shape [batch_size X sequence_length, num_experts].
+        attention_mask (`torch.Tensor`, None):
+            The attention_mask used in forward function
+            shape [batch_size X sequence_length] if not None.
+        num_experts (`int`, *optional*):
+            Number of experts
+
+    Returns:
+        The auxiliary loss.
+    """
+    if gate_logits is None or not isinstance(gate_logits, tuple):
+        return 0
+
+    if isinstance(gate_logits, tuple):
+        compute_device = gate_logits[0].device
+        concatenated_gate_logits = torch.cat([layer_gate.to(compute_device) for layer_gate in gate_logits], dim=0)
+    else:
+        compute_device = gate_logits.device
+        concatenated_gate_logits = gate_logits
+
+    routing_weights = torch.nn.functional.softmax(concatenated_gate_logits, dim=-1)
+
+    _, selected_experts = torch.topk(routing_weights, top_k, dim=-1)
+
+    expert_mask = torch.nn.functional.one_hot(selected_experts, num_experts)
+
+    if attention_mask is None:
+        # Compute the percentage of tokens routed to each experts
+        tokens_per_expert = torch.mean(expert_mask.float(), dim=0)
+
+        # Compute the average probability of routing to these experts
+        router_prob_per_expert = torch.mean(routing_weights, dim=0)
+    else:
+        batch_size, sequence_length = attention_mask.shape
+        num_hidden_layers = concatenated_gate_logits.shape[0] // (batch_size * sequence_length)
+
+        # Compute the mask that masks all padding tokens as 0 with the same shape of expert_mask
+        expert_attention_mask = (
+            attention_mask[None, :, :, None, None]
+            .expand((num_hidden_layers, batch_size, sequence_length, 2, num_experts))
+            .reshape(-1, 2, num_experts)
+            .to(compute_device)
+        )
+
+        # Compute the percentage of tokens routed to each experts
+        tokens_per_expert = torch.sum(expert_mask.float() * expert_attention_mask, dim=0) / torch.sum(
+            expert_attention_mask, dim=0
+        )
+
+        # Compute the mask that masks all padding tokens as 0 with the same shape of tokens_per_expert
+        router_per_expert_attention_mask = (
+            attention_mask[None, :, :, None]
+            .expand((num_hidden_layers, batch_size, sequence_length, num_experts))
+            .reshape(-1, num_experts)
+            .to(compute_device)
+        )
+
+        # Compute the average probability of routing to these experts
+        router_prob_per_expert = torch.sum(routing_weights * router_per_expert_attention_mask, dim=0) / torch.sum(
+            router_per_expert_attention_mask, dim=0
+        )
+
+    overall_loss = torch.sum(tokens_per_expert * router_prob_per_expert.unsqueeze(0))
+    return overall_loss * num_experts
+
+
+def router_z_loss_func(router_logits: torch.Tensor) -> float:
+    r"""
+    Compute the router z-loss implemented in PyTorch.
+
+    The router z-loss was introduced in [Designing Effective Sparse Expert Models](https://arxiv.org/abs/2202.08906).
+    It encourages router logits to remain small in an effort to improve stability.
+
+    Args:
+        router_logits (`float`):
+            Input logits of shape [batch_size, sequence_length, num_experts]
+
+    Returns:
+        Scalar router z-loss.
+    """
+    num_groups, tokens_per_group, _ = router_logits.shape
+    log_z = torch.logsumexp(router_logits, dim=-1)
+    z_loss = log_z**2
+    return torch.sum(z_loss) / (num_groups * tokens_per_group)
 
 
 class ROT5PreTrainedModel(PreTrainedModel):
@@ -782,6 +920,7 @@ class ROT5Stack(ROT5PreTrainedModel):
             use_cache=None,
             output_attentions=None,
             output_hidden_states=None,
+            output_router_logits: Optional[bool] = None,
             return_dict=None,
     ):
         # Model parallel
@@ -792,6 +931,9 @@ class ROT5Stack(ROT5PreTrainedModel):
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        output_router_logits = (
+            output_router_logits if output_router_logits is not None else self.config.output_router_logits
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -861,6 +1003,7 @@ class ROT5Stack(ROT5PreTrainedModel):
         all_hidden_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
         all_cross_attentions = () if (output_attentions and self.is_decoder) else None
+        all_router_logits = () if output_router_logits else None
         position_bias = None
         encoder_decoder_position_bias = None
 
@@ -902,6 +1045,7 @@ class ROT5Stack(ROT5PreTrainedModel):
                     None,  # past_key_value is always None with gradient checkpointing
                     use_cache,
                     output_attentions,
+                    output_router_logits
                 )
             else:
                 layer_outputs = layer_module(
@@ -914,6 +1058,7 @@ class ROT5Stack(ROT5PreTrainedModel):
                     past_key_value=past_key_value,
                     use_cache=use_cache,
                     output_attentions=output_attentions,
+                    output_router_logits=output_router_logits
                 )
 
             # layer_outputs is a tuple with:
@@ -931,6 +1076,9 @@ class ROT5Stack(ROT5PreTrainedModel):
                 all_attentions = all_attentions + (layer_outputs[2],)
                 if self.is_decoder:
                     all_cross_attentions = all_cross_attentions + (layer_outputs[3],)
+
+            if output_router_logits:
+                all_router_logits += (layer_outputs[-1],)
 
             # Model Parallel: If it's the last layer for that device, put things on the next device
             if self.model_parallel:
@@ -954,15 +1102,17 @@ class ROT5Stack(ROT5PreTrainedModel):
                     all_hidden_states,
                     all_attentions,
                     all_cross_attentions,
+                    all_router_logits
                 ]
                 if v is not None
             )
-        return BaseModelOutputWithPastAndCrossAttentions(
+        return MoEModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
             past_key_values=present_key_value_states,
             hidden_states=all_hidden_states,
             attentions=all_attentions,
             cross_attentions=all_cross_attentions,
+            router_probs=all_router_logits
         )
 
 
@@ -1066,8 +1216,9 @@ class ROT5Model(ROT5PreTrainedModel):
             use_cache: Optional[bool] = None,
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
+            output_router_logits: Optional[bool] = None,
             return_dict: Optional[bool] = None,
-    ) -> Union[Tuple[torch.FloatTensor], Seq2SeqModelOutput]:
+    ) -> Union[Tuple[torch.FloatTensor], Seq2SeqMoEModelOutput]:
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -1087,13 +1238,15 @@ class ROT5Model(ROT5PreTrainedModel):
                 head_mask=head_mask,
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
+                output_router_logits=output_router_logits,
                 return_dict=return_dict,
             )
-        elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
-            encoder_outputs = BaseModelOutput(
+        elif return_dict and not isinstance(encoder_outputs, MoEModelOutput):
+            encoder_outputs = MoEModelOutput(
                 last_hidden_state=encoder_outputs[0],
                 hidden_states=encoder_outputs[1] if len(encoder_outputs) > 1 else None,
                 attentions=encoder_outputs[2] if len(encoder_outputs) > 2 else None,
+                router_probs=encoder_outputs[3] if len(encoder_outputs) > 3 else None,
             )
 
         hidden_states = encoder_outputs[0]
@@ -1122,13 +1275,14 @@ class ROT5Model(ROT5PreTrainedModel):
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
+            output_router_logits=output_router_logits,
             return_dict=return_dict,
         )
 
         if not return_dict:
             return decoder_outputs + encoder_outputs
 
-        return Seq2SeqModelOutput(
+        return Seq2SeqMoEModelOutput(
             last_hidden_state=decoder_outputs.last_hidden_state,
             past_key_values=decoder_outputs.past_key_values,
             decoder_hidden_states=decoder_outputs.hidden_states,
@@ -1137,6 +1291,8 @@ class ROT5Model(ROT5PreTrainedModel):
             encoder_last_hidden_state=encoder_outputs.last_hidden_state,
             encoder_hidden_states=encoder_outputs.hidden_states,
             encoder_attentions=encoder_outputs.attentions,
+            encoder_router_logits=encoder_outputs.router_probs,
+            decoder_router_logits=decoder_outputs.router_probs
         )
 
 
@@ -1162,6 +1318,11 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
         self.decoder = ROT5Stack(decoder_config, self.shared)
 
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+
+        # MOE
+        self.moe = config.num_local_experts > 1
+        self.router_z_loss_coef = config.router_z_loss_coef
+        self.router_aux_loss_coef = config.router_aux_loss_coef
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -1228,6 +1389,12 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
     def get_decoder(self):
         return self.decoder
 
+    def _unpack_router_logits(self, router_outputs):
+        total_router_logits = []
+        for router_logits in router_outputs:
+            total_router_logits.append(router_logits)
+        return torch.cat(total_router_logits, dim=1)
+
     def forward(
             self,
             input_ids: Optional[torch.LongTensor] = None,
@@ -1245,10 +1412,14 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
             use_cache: Optional[bool] = None,
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
+            output_router_logits: Optional[bool] = None,
             return_dict: Optional[bool] = None,
-    ) -> Union[Tuple[torch.FloatTensor], Seq2SeqLMOutput]:
+    ) -> Union[Tuple[torch.FloatTensor], Seq2SeqMoEOutput]:
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        if not self.moe:
+            logger.warning_once("MOE not enabled with 1 experts. Setting output_router_logits = False")
+            output_router_logits = False
 
         # FutureWarning: head_mask was separated into two input args - head_mask, decoder_head_mask
         if head_mask is not None and decoder_head_mask is None:
@@ -1267,13 +1438,15 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
                 head_mask=head_mask,
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
+                output_router_logits=output_router_logits,
                 return_dict=return_dict,
             )
-        elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
-            encoder_outputs = BaseModelOutput(
+        elif return_dict and not isinstance(encoder_outputs, MoEModelOutput):
+            encoder_outputs = MoEModelOutput(
                 last_hidden_state=encoder_outputs[0],
                 hidden_states=encoder_outputs[1] if len(encoder_outputs) > 1 else None,
                 attentions=encoder_outputs[2] if len(encoder_outputs) > 2 else None,
+                router_probs=encoder_outputs[3] if len(encoder_outputs) > 3 else None,
             )
 
         hidden_states = encoder_outputs[0]
@@ -1309,6 +1482,7 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
+            output_router_logits=output_router_logits,
             return_dict=return_dict,
         )
 
@@ -1326,6 +1500,28 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
             sequence_output = sequence_output * (self.model_dim ** -0.5)
 
         lm_logits = self.lm_head(sequence_output)
+        encoder_z_loss = 0.0
+        encoder_aux_loss = 0.0
+        decoder_z_loss = 0.0
+        decoder_aux_loss = 0.0
+
+        if output_router_logits:
+            # Compute the router loss (z_loss + auxiliary loss) for each router in the encoder and decoder
+            if self.encoder.config.encoder_sparse_step > 1:
+                encoder_router_logits = self._unpack_router_logits(encoder_outputs[-1])
+                encoder_z_loss = router_z_loss_func(encoder_router_logits)
+                encoder_aux_loss = load_balancing_loss_func(encoder_router_logits)
+            else:
+                encoder_z_loss = 0.0
+                encoder_aux_loss = 0.0
+
+            if self.decoder.config.decoder_sparse_step > 1:
+                decoder_router_logits = self._unpack_router_logits(decoder_outputs[-1])
+                decoder_z_loss = router_z_loss_func(decoder_router_logits)
+                decoder_aux_loss = load_balancing_loss_func(decoder_router_logits)
+            else:
+                decoder_z_loss = 0.0
+                decoder_aux_loss = 0.0
 
         loss = None
         if labels is not None:
@@ -1333,22 +1529,36 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
             # move labels to correct device to enable PP
             labels = labels.to(lm_logits.device)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
-            # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
+
+            if output_router_logits:
+                z_loss = self.router_z_loss_coef * (encoder_z_loss + decoder_z_loss)
+                aux_loss = self.router_aux_loss_coef * (encoder_aux_loss + decoder_aux_loss)
+                loss = loss + z_loss + aux_loss
 
         if not return_dict:
-            output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
+            output = (lm_logits,)
+            if output_router_logits:
+                output += (encoder_z_loss, encoder_aux_loss, decoder_z_loss, decoder_aux_loss)
+            output += (*decoder_outputs[1:], *encoder_outputs)
+
             return ((loss,) + output) if loss is not None else output
 
-        return Seq2SeqLMOutput(
+        return Seq2SeqMoEOutput(
             loss=loss,
             logits=lm_logits,
+            encoder_z_loss=encoder_z_loss,
+            encoder_aux_loss=encoder_aux_loss,
+            decoder_z_loss=decoder_z_loss,
+            decoder_aux_loss=decoder_aux_loss,
             past_key_values=decoder_outputs.past_key_values,
             decoder_hidden_states=decoder_outputs.hidden_states,
             decoder_attentions=decoder_outputs.attentions,
             cross_attentions=decoder_outputs.cross_attentions,
+            decoder_router_logits=decoder_outputs.router_probs,
             encoder_last_hidden_state=encoder_outputs.last_hidden_state,
             encoder_hidden_states=encoder_outputs.hidden_states,
             encoder_attentions=encoder_outputs.attentions,
+            encoder_router_logits=encoder_outputs.router_probs,
         )
 
     def prepare_inputs_for_generation(
