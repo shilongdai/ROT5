@@ -413,7 +413,7 @@ class ROT5SparseMoeBlock(nn.Module):
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         return self.forward_dense(hidden_states)
 
-    def forward_dense(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward_dense(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
         # router_logits: (batch * sequence_length, n_experts)
@@ -433,7 +433,7 @@ class ROT5SparseMoeBlock(nn.Module):
             y[flat_topk_idx == i] = expert(hidden_states[flat_topk_idx == i])
         y = (y.view(*topk_weight.shape, -1) * topk_weight.unsqueeze(-1)).sum(dim=1)
         final_hidden_states = y.reshape(batch_size, sequence_length, hidden_dim)
-        return final_hidden_states
+        return final_hidden_states, router_logits
 
     def forward_sparse(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """ """
