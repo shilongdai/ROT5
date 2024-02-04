@@ -43,7 +43,7 @@ class ROT5Config(PretrainedConfig):
             dropout_rate=0.1,
             layer_norm_epsilon=1e-6,
             initializer_factor=1.0,
-            num_local_experts=8,
+            num_local_experts=1,
             num_experts_per_tok=1,
             router_z_loss_coef=0.001,
             router_aux_loss_coef=0.001,
