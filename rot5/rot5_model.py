@@ -682,8 +682,8 @@ def load_balancing_loss_func(
         # Compute the mask that masks all padding tokens as 0 with the same shape of expert_mask
         expert_attention_mask = (
             attention_mask[None, :, :, None, None]
-            .expand((num_hidden_layers, batch_size, sequence_length, 2, num_experts))
-            .reshape(-1, 2, num_experts)
+            .expand((num_hidden_layers, batch_size, sequence_length, top_k, num_experts))
+            .reshape(-1, top_k, num_experts)
             .to(compute_device)
         )
 
@@ -1536,6 +1536,9 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
             if output_router_logits:
                 z_loss = self.router_z_loss_coef * (encoder_z_loss + decoder_z_loss)
                 aux_loss = self.router_aux_loss_coef * (encoder_aux_loss + decoder_aux_loss)
+                logger.info(f"Z Loss: {z_loss}")
+                logger.info(f"Aux Loss: {aux_loss}")
+                logger.info(f"Orig Loss: {loss}")
                 loss = loss + z_loss + aux_loss
 
         if not return_dict:
