@@ -726,7 +726,7 @@ def router_z_loss_func(router_logits: torch.Tensor) -> float:
     tokens, _ = router_logits.shape
     log_z = torch.logsumexp(router_logits, dim=-1)
     z_loss = log_z**2
-    return torch.sum(z_loss) / (tokens)
+    return torch.sum(z_loss) / tokens
 
 
 class ROT5PreTrainedModel(PreTrainedModel):
