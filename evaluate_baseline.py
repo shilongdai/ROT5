@@ -18,6 +18,7 @@ class ScriptArguments:
     dataset_path: Optional[str] = field(default="./data/mlm")
     eval_name: Optional[str] = field(default="eval")
     cache_dir: Optional[str] = field(default="./transformers_cache")
+    per_device_eval_batch_size: Optional[int] = field(default=32)
     local_rank: Optional[int] = field(default=0)
     seed: Optional[int] = field(default=42)
 
@@ -33,6 +34,7 @@ if __name__ == "__main__":
 
     train_args = Seq2SeqTrainingArguments(output_dir="output",
                                           deepspeed=script_args.deepspeed,
+                                          per_device_eval_batch_size=script_args.per_device_eval_batch_size,
                                           local_rank=script_args.local_rank)
     tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
     model = AutoModelForSeq2SeqLM.from_pretrained(script_args.model_path)
