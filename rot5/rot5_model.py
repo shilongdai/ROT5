@@ -631,7 +631,7 @@ class ROT5Block(nn.Module):
 
 
 def load_balancing_loss_func(
-    gate_logits: torch.Tensor, num_experts: torch.Tensor = None, top_k=2, attention_mask: Optional[torch.Tensor] = None
+    gate_logits: torch.Tensor, num_experts: int, top_k=2, attention_mask: Optional[torch.Tensor] = None
 ) -> float:
     r"""
     Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
@@ -1520,11 +1520,11 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
             # Compute the router loss (z_loss + auxiliary loss) for each router in the encoder and decoder
             encoder_router_logits = self._unpack_router_logits(encoder_outputs[-1])
             encoder_z_loss = router_z_loss_func(encoder_router_logits)
-            encoder_aux_loss = load_balancing_loss_func(encoder_router_logits)
+            encoder_aux_loss = load_balancing_loss_func(encoder_router_logits, self.config.num_local_experts)
 
             decoder_router_logits = self._unpack_router_logits(decoder_outputs[-1])
             decoder_z_loss = router_z_loss_func(decoder_router_logits)
-            decoder_aux_loss = load_balancing_loss_func(decoder_router_logits)
+            decoder_aux_loss = load_balancing_loss_func(decoder_router_logits, self.config.num_local_experts)
 
         loss = None
         if labels is not None:
