@@ -1518,21 +1518,13 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
 
         if output_router_logits:
             # Compute the router loss (z_loss + auxiliary loss) for each router in the encoder and decoder
-            if self.encoder.config.encoder_sparse_step > 1:
-                encoder_router_logits = self._unpack_router_logits(encoder_outputs[-1])
-                encoder_z_loss = router_z_loss_func(encoder_router_logits)
-                encoder_aux_loss = load_balancing_loss_func(encoder_router_logits)
-            else:
-                encoder_z_loss = 0.0
-                encoder_aux_loss = 0.0
+            encoder_router_logits = self._unpack_router_logits(encoder_outputs[-1])
+            encoder_z_loss = router_z_loss_func(encoder_router_logits)
+            encoder_aux_loss = load_balancing_loss_func(encoder_router_logits)
 
-            if self.decoder.config.decoder_sparse_step > 1:
-                decoder_router_logits = self._unpack_router_logits(decoder_outputs[-1])
-                decoder_z_loss = router_z_loss_func(decoder_router_logits)
-                decoder_aux_loss = load_balancing_loss_func(decoder_router_logits)
-            else:
-                decoder_z_loss = 0.0
-                decoder_aux_loss = 0.0
+            decoder_router_logits = self._unpack_router_logits(decoder_outputs[-1])
+            decoder_z_loss = router_z_loss_func(decoder_router_logits)
+            decoder_aux_loss = load_balancing_loss_func(decoder_router_logits)
 
         loss = None
         if labels is not None:
