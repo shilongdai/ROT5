@@ -38,6 +38,7 @@ if __name__ == "__main__":
                                           local_rank=script_args.local_rank)
     tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
     model = AutoModelForSeq2SeqLM.from_pretrained(script_args.model_path)
+    model.config.output_router_logits = False
 
 
     def sentinel_from_end(ids: np.ndarray, max_bound: int):
