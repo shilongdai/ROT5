@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from text_denoising import DataCollatorForUL2
+import rot5
 
 
 @dataclass
