@@ -1221,6 +1221,13 @@ class ROT5Model(ROT5PreTrainedModel):
     ) -> Union[Tuple[torch.FloatTensor], Seq2SeqMoEModelOutput]:
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        output_router_logits = (
+            output_router_logits if output_router_logits is not None else self.config.output_router_logits
+        )
+
+        if not self.moe:
+            logger.warning_once("MOE not enabled. Setting output_router_logits = False")
+            output_router_logits = False
 
         # FutureWarning: head_mask was separated into two input args - head_mask, decoder_head_mask
         if head_mask is not None and decoder_head_mask is None:
@@ -1417,8 +1424,12 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
     ) -> Union[Tuple[torch.FloatTensor], Seq2SeqMoEOutput]:
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        output_router_logits = (
+            output_router_logits if output_router_logits is not None else self.config.output_router_logits
+        )
+
         if not self.moe:
-            logger.warning_once("MOE not enabled with 1 experts. Setting output_router_logits = False")
+            logger.warning_once("MOE not enabled. Setting output_router_logits = False")
             output_router_logits = False
 
         # FutureWarning: head_mask was separated into two input args - head_mask, decoder_head_mask
