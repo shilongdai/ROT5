@@ -72,7 +72,7 @@ class ROT5Config(PretrainedConfig):
         self.initializer_factor = initializer_factor
         self.num_local_experts = num_local_experts
         self.num_experts_per_tok = num_experts_per_tok
-        self.router_z_loss_coef = router_z_loss_coef,
+        self.router_z_loss_coef = router_z_loss_coef
         self.router_aux_loss_coef=router_aux_loss_coef
         self.output_router_logits = output_router_logits
         self.feed_forward_proj = feed_forward_proj
