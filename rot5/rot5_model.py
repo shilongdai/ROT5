@@ -723,10 +723,10 @@ def router_z_loss_func(router_logits: torch.Tensor) -> float:
     Returns:
         Scalar router z-loss.
     """
-    num_groups, tokens_per_group, _ = router_logits.shape
+    tokens, _ = router_logits.shape
     log_z = torch.logsumexp(router_logits, dim=-1)
     z_loss = log_z**2
-    return torch.sum(z_loss) / (num_groups * tokens_per_group)
+    return torch.sum(z_loss) / (tokens)
 
 
 class ROT5PreTrainedModel(PreTrainedModel):
