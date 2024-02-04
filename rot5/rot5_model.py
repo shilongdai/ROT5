@@ -1536,9 +1536,7 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
             if output_router_logits:
                 z_loss = self.router_z_loss_coef * (encoder_z_loss + decoder_z_loss)
                 aux_loss = self.router_aux_loss_coef * (encoder_aux_loss + decoder_aux_loss)
-                logger.info(f"Z Loss: {z_loss}")
-                logger.info(f"Aux Loss: {aux_loss}")
-                logger.info(f"Orig Loss: {loss}")
+                logger.warning(f"Z Loss: {z_loss}\nAux Loss: {aux_loss}\nOrig Loss: {loss}")
                 loss = loss + z_loss + aux_loss
 
         if not return_dict:
