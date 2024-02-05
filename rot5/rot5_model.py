@@ -410,7 +410,7 @@ class ROT5SparseMoeBlock(nn.Module):
         self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False)
         self.experts = nn.ModuleList([ROT5MOEDenseActDense(config) for _ in range(self.num_experts)])
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.forward_dense(hidden_states)
 
     def forward_dense(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -1509,12 +1509,9 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
             loss_fct = CrossEntropyLoss(ignore_index=-100, reduction="none")
             # move labels to correct device to enable PP
             labels = labels.to(lm_logits.device)
-            flat_labels = labels.view(-1)
-            loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), flat_labels)
-            loss = loss[flat_labels != -100]
-            loss = loss.nanmean()
+            loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
 
-            if output_router_logits:
+        if output_router_logits:
                 z_loss = self.router_z_loss_coef * (encoder_z_loss + decoder_z_loss)
                 aux_loss = self.router_aux_loss_coef * (encoder_aux_loss + decoder_aux_loss)
                 loss = loss + z_loss + aux_loss
