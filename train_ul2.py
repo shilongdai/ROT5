@@ -30,22 +30,6 @@ class ScriptArguments:
     aux_loss: Optional[bool] = field(default=False)
 
 
-def nan_hook(self, inp, output):
-    if isinstance(output, tuple):
-        outputs = output
-    elif isinstance(output, torch.Tensor):
-        outputs = [output]
-    else:
-        outputs = []
-
-    for i, out in enumerate(outputs):
-        nan_mask = torch.isnan(out)
-        if nan_mask.any():
-            print("In", self.__class__.__name__)
-            raise RuntimeError(f"Found NAN in output {i} at indices: ", nan_mask.nonzero(), "where:",
-                               out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
-
-
 if __name__ == "__main__":
     parser = HfArgumentParser([Seq2SeqTrainingArguments, ScriptArguments])
     train_args, script_args = parser.parse_args_into_dataclasses()
@@ -95,8 +79,6 @@ if __name__ == "__main__":
 
     if train_args.gradient_checkpointing:
         rot5.config.use_cache = False
-    for submodule in rot5.modules():
-        submodule.register_forward_hook(nan_hook)
 
 
     def sentinel_from_end(ids: np.ndarray, max_bound: int):

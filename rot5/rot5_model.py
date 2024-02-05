@@ -431,7 +431,14 @@ class ROT5SparseMoeBlock(nn.Module):
         for i in range(self.num_experts):
             expert = self.experts[i]
             y[flat_topk_idx == i] = expert(hidden_states[flat_topk_idx == i])
+        y_prev_nans = torch.sum(torch.isnan(y))
         y = (y.view(*topk_weight.shape, -1) * topk_weight.unsqueeze(-1)).sum(dim=1)
+        y_post_nans = torch.sum(torch.isnan(y))
+        if y_prev_nans > 0 or y_post_nans > 0:
+            print(f"Logits Nans: {torch.sum(torch.isnan(router_logits))}, "
+                  f"Routing Nans: {torch.sum(torch.isnan(routing_weights))}, "
+                  f"TopK Weight Nans: {torch.sum(torch.isnan(topk_weight))}, "
+                  f"Y Prev Nans: {y_prev_nans}, Y Post Nans: {y_post_nans}")
         final_hidden_states = y.reshape(batch_size, sequence_length, hidden_dim)
         return final_hidden_states, router_logits
 
@@ -1506,7 +1513,7 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
 
         loss = None
         if labels is not None:
-            loss_fct = CrossEntropyLoss(ignore_index=-100, reduction="none")
+            loss_fct = CrossEntropyLoss(ignore_index=-100, reduction="mean")
             # move labels to correct device to enable PP
             labels = labels.to(lm_logits.device)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
