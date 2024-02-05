@@ -653,8 +653,6 @@ def load_balancing_loss_func(
     Returns:
         The auxiliary loss.
     """
-    orig_type = gate_logits.dtype
-    gate_logits = gate_logits.to(torch.float)
     if isinstance(gate_logits, tuple):
         compute_device = gate_logits[0].device
         concatenated_gate_logits = torch.cat([layer_gate.to(compute_device) for layer_gate in gate_logits], dim=0)
@@ -674,7 +672,7 @@ def load_balancing_loss_func(
 
     overall_loss = torch.sum(tokens_per_expert * router_prob_per_expert.unsqueeze(0))
     result = overall_loss * num_experts
-    return result.to(orig_type)
+    return result
 
 
 def router_z_loss_func(router_logits: torch.Tensor) -> float:
@@ -691,13 +689,11 @@ def router_z_loss_func(router_logits: torch.Tensor) -> float:
     Returns:
         Scalar router z-loss.
     """
-    orig_type = router_logits.dtype
-    router_logits = router_logits.to(torch.float)
     tokens, _ = router_logits.shape
     log_z = torch.logsumexp(router_logits, dim=-1)
     z_loss = log_z ** 2
     result = torch.sum(z_loss) / tokens
-    return result.to(orig_type)
+    return result
 
 
 class ROT5PreTrainedModel(PreTrainedModel):
@@ -1510,10 +1506,13 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
 
         loss = None
         if labels is not None:
-            loss_fct = CrossEntropyLoss(ignore_index=-100)
+            loss_fct = CrossEntropyLoss(ignore_index=-100, reduction="none")
             # move labels to correct device to enable PP
             labels = labels.to(lm_logits.device)
-            loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+            flat_labels = labels.view(-1)
+            loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), flat_labels)
+            loss = loss[flat_labels != -100]
+            loss = loss.nanmean()
 
             if output_router_logits:
                 z_loss = self.router_z_loss_coef * (encoder_z_loss + decoder_z_loss)
