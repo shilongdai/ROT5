@@ -1520,9 +1520,6 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
             aux_loss = self.router_aux_loss_coef * (encoder_aux_loss + decoder_aux_loss)
             loss = loss + z_loss + aux_loss
 
-        if torch.isnan(loss):
-            loss = 0.0
-
         if not return_dict:
             output = (lm_logits,)
             if output_router_logits:

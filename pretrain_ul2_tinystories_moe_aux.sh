@@ -8,5 +8,5 @@
    --save_steps 100 --save_strategy "steps" --save_total_limit 5 --load_best_model_at_end True \
    --bf16 True --gradient_checkpointing True --deepspeed "./deepspeed/deepspeed_2.json" \
    --dataset_path "data/tinystories_mistral" --eval_name "validation" \
-   --tokenizer_name "mistralai/Mistral-7B-Instruct-v0.2" --kv_heads 4 --num_experts 8 \
+   --tokenizer_name "mistralai/Mistral-7B-Instruct-v0.2" --kv_heads 4 --num_experts 4 \
    --aux_loss True
