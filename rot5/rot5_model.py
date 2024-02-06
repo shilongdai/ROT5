@@ -687,7 +687,7 @@ def router_z_loss_func(router_logits: torch.Tensor) -> float:
         Scalar router z-loss.
     """
     tokens, experts = router_logits.shape
-    log_z = torch.logsumexp(router_logits[:, -1], dim=-1)
+    log_z = torch.logsumexp(router_logits, dim=-1)
     z_loss = log_z ** 2
     result = torch.sum(z_loss) * experts / tokens
     return result
@@ -1516,9 +1516,12 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
 
         if output_router_logits:
-                z_loss = self.router_z_loss_coef * (encoder_z_loss + decoder_z_loss)
-                aux_loss = self.router_aux_loss_coef * (encoder_aux_loss + decoder_aux_loss)
-                loss = loss + z_loss + aux_loss
+            z_loss = self.router_z_loss_coef * (encoder_z_loss + decoder_z_loss)
+            aux_loss = self.router_aux_loss_coef * (encoder_aux_loss + decoder_aux_loss)
+            loss = loss + z_loss + aux_loss
+
+        if torch.isnan(loss):
+            loss = 0.0
 
         if not return_dict:
             output = (lm_logits,)
