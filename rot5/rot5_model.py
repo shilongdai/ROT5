@@ -431,14 +431,7 @@ class ROT5SparseMoeBlock(nn.Module):
         for i in range(self.num_experts):
             expert = self.experts[i]
             y[flat_topk_idx == i] = expert(hidden_states[flat_topk_idx == i])
-        y_prev_nans = torch.sum(torch.isnan(y))
         y = (y.view(*topk_weight.shape, -1) * topk_weight.unsqueeze(-1)).sum(dim=1)
-        y_post_nans = torch.sum(torch.isnan(y))
-        if y_prev_nans > 0 or y_post_nans > 0:
-            print(f"Logits Nans: {torch.sum(torch.isnan(router_logits))}, "
-                  f"Routing Nans: {torch.sum(torch.isnan(routing_weights))}, "
-                  f"TopK Weight Nans: {torch.sum(torch.isnan(topk_weight))}, "
-                  f"Y Prev Nans: {y_prev_nans}, Y Post Nans: {y_post_nans}")
         final_hidden_states = y.reshape(batch_size, sequence_length, hidden_dim)
         return final_hidden_states, router_logits
 
@@ -783,6 +776,13 @@ class ROT5PreTrainedModel(PreTrainedModel):
             module.o.weight.data.normal_(mean=0.0, std=factor * ((n_heads * key_value_proj_dim) ** -0.5))
         elif isinstance(module, ROT5SparseMoeBlock):
             module.gate.weight.data.normal_(mean=0.0, std=factor * 1)
+        elif isinstance(module, ROT5MOEDenseActDense):
+            module.wi.weight.data.normal_(mean=0.0, std=factor * ((self.config.d_model) ** -0.5))
+            if hasattr(module.wi, "bias") and module.wi.bias is not None:
+                module.wi.bias.data.zero_()
+            module.wo.weight.data.normal_(mean=0.0, std=factor * ((self.config.d_ff) ** -0.5))
+            if hasattr(module.wo, "bias") and module.wo.bias is not None:
+                module.wo.bias.data.zero_()
 
     def _shift_right(self, input_ids):
         decoder_start_token_id = self.config.decoder_start_token_id
