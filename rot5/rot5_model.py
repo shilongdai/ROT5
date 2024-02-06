@@ -677,22 +677,19 @@ def load_balancing_loss_func(
 
 def router_z_loss_func(router_logits: torch.Tensor) -> float:
     r"""
-    Compute the router z-loss implemented in PyTorch.
-
-    The router z-loss was introduced in [Designing Effective Sparse Expert Models](https://arxiv.org/abs/2202.08906).
-    It encourages router logits to remain small in an effort to improve stability.
+    Compute the adjusted z-loss focusing on setting the first expert to 0 in effort to identify params
 
     Args:
         router_logits (`float`):
-            Input logits of shape [batch_size, sequence_length, num_experts]
+            Input logits of shape [batch_size * sequence_length, num_experts]
 
     Returns:
         Scalar router z-loss.
     """
-    tokens, _ = router_logits.shape
-    log_z = torch.logsumexp(router_logits, dim=-1)
+    tokens, experts = router_logits.shape
+    log_z = torch.logsumexp(router_logits[:, -1], dim=-1)
     z_loss = log_z ** 2
-    result = torch.sum(z_loss) / tokens
+    result = torch.sum(z_loss) * experts / tokens
     return result
 
 
