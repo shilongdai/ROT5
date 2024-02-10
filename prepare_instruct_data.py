@@ -5,6 +5,7 @@ from typing import Optional, cast, Dict, List, Any
 import numpy as np
 import torch
 from datasets import load_dataset
+from datasets import Dataset
 from transformers import HfArgumentParser, AutoTokenizer, PreTrainedTokenizer
 
 
@@ -24,9 +25,11 @@ def split_input_output(batch: Dict[str, List[Any]], tokenizer: PreTrainedTokeniz
     inputs = []
     outputs = []
     for entry in batch["text"]:
-        parts = entry.split(" Story: ")
-        inputs.append(parts[0])
-        outputs.append(parts[1])
+        parts = entry.split("Story:")
+        if len(parts) != 2:
+            continue
+        inputs.append(parts[0].strip())
+        outputs.append(parts[1].strip())
 
     input_map = tokenizer(inputs)
     labels = tokenizer(outputs, add_special_tokens=False)["input_ids"]
@@ -45,8 +48,10 @@ if __name__ == "__main__":
 
     tokenizer = AutoTokenizer.from_pretrained(script_args.tokenizer_name, cache_dir=script_args.cache_dir)
     ds = load_dataset(DATA_PATH, cache_dir=script_args.cache_dir)
+    print(ds)
+
     if script_args.sample:
-        ds["train"] = ds["train"].shuffle(seed=script_args.seed)[:script_args.sample]
+        ds["train"] = Dataset.from_dict(ds["train"].shuffle(seed=script_args.seed)[:script_args.sample])
 
     columns = set()
     for col_list in ds.column_names.values():
