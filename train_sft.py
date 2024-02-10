@@ -51,9 +51,6 @@ def create_summarization_metrics(tokenizer):
         # Rouge expects a newline after each sentence
         decoded_labels = ["\n".join(clean_sentences(nltk.sent_tokenize(label.lower()))) for label in labels]
         decoded_preds = ["\n".join(clean_sentences(nltk.sent_tokenize(pred.lower()))) for pred in predicted]
-
-        print(f"Clean Predictions: {decoded_preds[0]}")
-        print(f"Clean Labels: {decoded_labels[0]}")
         
         # Note that other metrics may not have a `use_aggregator` parameter
         # and thus will return a list, computing a metric for each sentence.
@@ -83,7 +80,7 @@ def create_summarization_metrics(tokenizer):
 
         for l, p in zip(decoded_labels, decoded_preds):
             rouge_labels.append(l.lower().strip())
-            rouge_preds.append(l.lower().strip())
+            rouge_preds.append(p.lower().strip())
             ratios.append(len(p) / len(l))
 
         result = {
