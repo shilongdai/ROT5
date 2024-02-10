@@ -52,6 +52,9 @@ def create_summarization_metrics(tokenizer):
         decoded_labels = ["\n".join(clean_sentences(nltk.sent_tokenize(label.lower()))) for label in labels]
         decoded_preds = ["\n".join(clean_sentences(nltk.sent_tokenize(pred.lower()))) for pred in predicted]
 
+        print(f"Clean Predictions: {decoded_preds[0]}")
+        print(f"Clean Labels: {decoded_labels[0]}")
+        
         # Note that other metrics may not have a `use_aggregator` parameter
         # and thus will return a list, computing a metric for each sentence.
         result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=False,
@@ -73,19 +76,18 @@ def create_summarization_metrics(tokenizer):
 
         print(f"Predictions: {decoded_preds[0]}")
         print(f"Labels: {decoded_labels[0]}")
-
-        avg_pred_len = np.mean([len(p) for p in decoded_preds])
-        avg_label_len = np.mean([len(l) for l in labels])
         
         rouge_labels = []
         rouge_preds = []
+        ratios = []
 
         for l, p in zip(decoded_labels, decoded_preds):
             rouge_labels.append(l.lower().strip())
             rouge_preds.append(l.lower().strip())
+            ratios.append(len(p) / len(l))
 
         result = {
-            "len_ratio": avg_pred_len / avg_label_len
+            "len_ratio": np.mean(ratios)
         }
         result.update(compute_rouge_metrics(rouge_labels, rouge_preds))
         return result
