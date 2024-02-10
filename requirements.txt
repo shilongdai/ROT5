@@ -5,3 +5,7 @@ evaluate==0.4.1
 scikit-learn==1.4.0
 tensorboard==2.15.1
 transformers==4.36.2
+nltk
+rouge-score
+
+

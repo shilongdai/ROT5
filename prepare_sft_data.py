@@ -1,4 +1,5 @@
 import random
+import re
 from dataclasses import dataclass, field
 from typing import Optional, cast, Dict, List, Any
 
@@ -24,12 +25,35 @@ DATA_PATH = "skeskinen/TinyStories-Instruct-hf"
 def split_input_output(batch: Dict[str, List[Any]], tokenizer: PreTrainedTokenizer):
     inputs = []
     outputs = []
+    preamble_match = re.compile(r"\s*\w+:")
     for entry in batch["text"]:
-        parts = entry.split("Story:")
-        if len(parts) != 2:
+        if "Summary:" not in entry:
             continue
-        inputs.append(parts[0].strip())
-        outputs.append(parts[1].strip())
+
+        current_story = []
+        current_summary = []
+        story_mode = False
+        summary_mode = False
+        for l in entry.split("\n"):
+            matcher = preamble_match.match(l)
+            if matcher:
+                if "Story" in matcher.group():
+                    story_mode = True
+                    summary_mode = False
+                elif "Summary" in matcher.group():
+                    story_mode = False
+                    summary_mode = True
+                else:
+                    story_mode = False
+                    summary_mode = False
+
+            if story_mode:
+                current_story.append(l.strip())
+            if summary_mode:
+                l = l.replace("Summary:", "").strip()
+                current_summary.append(l)
+        inputs.append(" ".join(current_story) + "\nSummary:")
+        outputs.append(" ".join(current_summary))
 
     input_map = tokenizer(inputs)
     labels = tokenizer(outputs, add_special_tokens=False)["input_ids"]
