@@ -7,4 +7,5 @@ deepspeed train_sft.py --output_dir="./t5_instruct" --final_output_dir "./t5_ins
    --logging_dir "tb_t5_instruct" --logging_steps 300 --generation_max_length 128 \
    --save_steps 300 --save_strategy "steps" --save_total_limit 10 --load_best_model_at_end True \
    --bf16 True --gradient_checkpointing True --deepspeed "./deepspeed/deepspeed_2.json" \
-   --dataset_path "data/tinystories_instruct_base" --eval_name "validation"
+   --dataset_path "data/tinystories_instruct_base" --eval_name "validation" \
+   --model_path "./t5-baseline"

@@ -10,7 +10,7 @@ from evaluate import load
 from nltk import WordNetLemmatizer
 from nltk.corpus import stopwords
 from transformers import AutoTokenizer, TrainingArguments, \
-    HfArgumentParser, Seq2SeqTrainingArguments, Seq2SeqTrainer, DataCollatorForSeq2Seq
+    HfArgumentParser, Seq2SeqTrainingArguments, Seq2SeqTrainer, DataCollatorForSeq2Seq, AutoModelForSeq2SeqLM
 
 from rot5 import (ROT5ForConditionalGeneration)
 
@@ -104,7 +104,7 @@ if __name__ == "__main__":
     torch.manual_seed(train_args.seed)
 
     tokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
-    rot5 = ROT5ForConditionalGeneration.from_pretrained(script_args.model_path)
+    rot5 = AutoModelForSeq2SeqLM.from_pretrained(script_args.model_path)
     sink_token = rot5.config.decoder_start_token_id
 
     if train_args.gradient_checkpointing:
