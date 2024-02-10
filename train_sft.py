@@ -63,13 +63,20 @@ def create_summarization_metrics(tokenizer):
 
     def compute_metrics(eval_pred):
         predictions, labels = eval_pred
-
+        
         # Replace -100 in the labels as we can't decode them.
         predictions = np.where(predictions != -100, predictions, tokenizer.bos_token_id)
         labels = np.where(labels != -100, labels, tokenizer.bos_token_id)
 
         decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+
+        print(f"Predictions: {decoded_preds[0]}")
+        print(f"Labels: {decoded_labels[0]}")
+
+        avg_pred_len = np.mean([len(p) for p in decoded_preds])
+        avg_label_len = np.mean([len(l) for l in labels])
+        
         rouge_labels = []
         rouge_preds = []
 
@@ -77,7 +84,9 @@ def create_summarization_metrics(tokenizer):
             rouge_labels.append(l.lower().strip())
             rouge_preds.append(l.lower().strip())
 
-        result = {}
+        result = {
+            "len_ratio": avg_pred_len / avg_label_len
+        }
         result.update(compute_rouge_metrics(rouge_labels, rouge_preds))
         return result
 

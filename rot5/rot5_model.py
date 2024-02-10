@@ -1489,10 +1489,10 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
             sequence_output = sequence_output * (self.model_dim ** -0.5)
 
         lm_logits = self.lm_head(sequence_output)
-        encoder_z_loss = 0.0
-        encoder_aux_loss = 0.0
-        decoder_z_loss = 0.0
-        decoder_aux_loss = 0.0
+        encoder_z_loss = torch.tensor(0.0, dtype=lm_logits.dtype, device=lm_logits.device)
+        encoder_aux_loss = torch.tensor(0.0, dtype=lm_logits.dtype, device=lm_logits.device)
+        decoder_z_loss = torch.tensor(0.0, dtype=lm_logits.dtype, device=lm_logits.device)
+        decoder_aux_loss = torch.tensor(0.0, dtype=lm_logits.dtype, device=lm_logits.device)
 
         if output_router_logits:
             # Compute the router loss (z_loss + auxiliary loss) for each router in the encoder and decoder
@@ -1503,10 +1503,10 @@ class ROT5ForConditionalGeneration(ROT5PreTrainedModel):
                                                                     self.config.num_experts_per_tok))
 
             decoder_router_logits = self._unpack_router_logits(decoder_outputs[-1])
-            decoder_z_loss = nan_or_zero(router_z_loss_func(decoder_router_logits))
-            decoder_aux_loss = nan_or_zero(load_balancing_loss_func(decoder_router_logits,
-                                                                    self.config.num_local_experts,
-                                                                    self.config.num_experts_per_tok))
+            decoder_z_loss = router_z_loss_func(decoder_router_logits)
+            decoder_aux_loss = load_balancing_loss_func(decoder_router_logits,
+                                                        self.config.num_local_experts,
+                                                        self.config.num_experts_per_tok)
 
         loss = None
         if labels is not None:
