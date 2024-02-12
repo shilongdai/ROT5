@@ -29,6 +29,13 @@ class ScriptArguments:
     final_output_dir: Optional[str] = field(default="./best_migrated_model")
     aux_loss: Optional[bool] = field(default=False)
 
+    d_model: Optional[int] = field(default=768)
+    d_ff: Optional[int] = field(default=3072)
+    d_kv: Optional[int] = field(default=64)
+    num_layers: Optional[int] = field(default=12)
+    num_heads: Optional[int] = field(default=12)
+
+
 
 if __name__ == "__main__":
     parser = HfArgumentParser([Seq2SeqTrainingArguments, ScriptArguments])
@@ -57,11 +64,11 @@ if __name__ == "__main__":
         max_length = script_args.model_max_length
         config = ROT5Config(
             vocab_size=len(tokenizer),
-            d_model=768,
-            d_ff=3072,
-            d_kv=64,
-            num_layers=12,
-            num_heads=12,
+            d_model=script_args.d_model,
+            d_ff=script_args.d_ff,
+            d_kv=script_args.d_kv,
+            num_layers=script_args.num_layers,
+            num_heads=script_args.num_heads,
             num_key_value_heads=script_args.kv_heads,
             feed_forward_proj="gelu",
             num_local_experts=script_args.num_experts,
@@ -79,6 +86,9 @@ if __name__ == "__main__":
 
     if train_args.gradient_checkpointing:
         rot5.config.use_cache = False
+
+    num_params = sum(p.numel() for p in rot5.parameters() if p.requires_grad)
+    print(f"Num Params: {num_params}")
 
 
     def sentinel_from_end(ids: np.ndarray, max_bound: int):
