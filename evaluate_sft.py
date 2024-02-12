@@ -9,6 +9,7 @@ from transformers import HfArgumentParser, PreTrainedTokenizer, AutoTokenizer, A
     Seq2SeqTrainingArguments, Seq2SeqTrainer, DataCollatorForSeq2Seq
 
 import rot5
+from train_sft import create_summarization_metrics
 
 
 @dataclass
@@ -34,6 +35,7 @@ if __name__ == "__main__":
 
     train_args = Seq2SeqTrainingArguments(output_dir="output",
                                           deepspeed=script_args.deepspeed,
+                                          predict_with_generate=True,
                                           per_device_eval_batch_size=script_args.per_device_eval_batch_size,
                                           local_rank=script_args.local_rank)
     tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
@@ -49,5 +51,6 @@ if __name__ == "__main__":
         args=train_args,
         eval_dataset=eval_set,
         data_collator=data_collator,
+        compute_metrics=create_summarization_metrics(tokenizer)
     )
     print(trainer.evaluate())
