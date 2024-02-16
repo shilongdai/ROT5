@@ -79,6 +79,7 @@ def chunk_data(batch: Dict[str, List[Any]], tokenizer: PreTrainedTokenizer,
             working_ids.append(tokenizer.eos_token_id)
         result["input_ids"].append(working_ids)
 
+    result["token_counts"] = [len(ids) for ids in result["input_ids"]]
     return result
 
 
@@ -114,5 +115,8 @@ if __name__ == "__main__":
                 remove_columns=list(columns)).shuffle(seed=script_args.seed)
     print(f"Chunked Dataset {script_args.dataset_path}:\n{ds}")
     splits = [s for s in ds.num_rows if len(ds[s]) > 0]
+    for s in splits:
+        print(f"Split {s} Token Counts: {np.sum(ds[s]['token_counts'])}")
+    ds = ds.remove_columns("token_counts")
     print(f"Sample Row:\n{tokenizer.decode(ds[splits[0]]['input_ids'][0])}")
     ds.save_to_disk(script_args.final_output_dir)

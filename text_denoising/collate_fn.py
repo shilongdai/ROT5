@@ -38,6 +38,7 @@ class DataCollatorForUL2(DataCollatorMixin):
     label_pad_token_id: int = -100
     decoder_start_token_id: int = -1
     sentinel_map: Callable[[np.ndarray], np.ndarray] = lambda x: x
+    window: int = 512
 
     def __post_init__(self):
         self.total_task = [0, 1, 2]
@@ -59,14 +60,32 @@ class DataCollatorForUL2(DataCollatorMixin):
         '''
         return random.choices(self.total_task, weights=self.task_prob, k=batch_size)
 
+    def assign_window(self, input_ids):
+        if len(input_ids) == 0:
+            return []
+        try:
+            iter(input_ids[0])
+        except TypeError:
+            input_ids = [input_ids]
+        result = []
+        for l in input_ids:
+            start = 0
+            if len(l) > self.window:
+                start = np.random.choice(len(l) - self.window + 1)
+            result.append(l[start:(start + self.window)])
+        return result
+
     def torch_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
         # Handle dict or lists with proper padding and conversion to tensor.
         # print(examples)
         task_ids = self.assign_task_type(len(examples))
         task_type = torch.tensor(task_ids)
         if isinstance(examples[0], Mapping):
+            for e in examples:
+                e["input_ids"] = self.assign_window(e["input_ids"])[0]
             batch = self.tokenizer.pad(examples, return_tensors="pt")
         else:
+            examples = self.assign_window(examples)
             batch = {
                 "input_ids": _torch_collate_batch(examples, self.tokenizer)
             }
