@@ -320,7 +320,7 @@ A 47M parameter GQA variant model can be constructed. Then, the model was tuned 
 with the exception that the effective batch size was scaled up to 1280 based on experiments of others on pre-training 
 LLMs from scratch. Finally, due to budget considerations, a RTX 3080 is used for the training process.
 
-### Chinchilla Pre-training Results
+### Chinchilla Results
 
 After 2 epochs of training, the pre-training validation loss on the full task version validation set (N = 25027) 
 turned out to be 1.851. Then, after tuning on the summarization data as before with the exact same setup,
