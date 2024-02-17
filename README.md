@@ -272,7 +272,7 @@ slightly faster rate for the GQA variant in addition to having a higher starting
 models trained from scratch performed significantly worse than the FLAN T5 tuned on a much larger corpus of text as well 
 as the FLAN collection of tasks.
 
-In addition, inspection of example outputs shows that the decoder part of the model seems to have became capable of 
+In addition, inspection of example outputs shows that the decoder part of the model seems to have become capable of 
 outputting readable English. However, the model as a whole has not fully developed the capabilities to associate the 
 input text with an appropriate summary. Both the Baseline T5 and the GQA variant did not output summaries that capture 
 the original story. In addition, the Baseline T5 did not even capture the actors in the first example story. On the 
@@ -280,7 +280,8 @@ other hand, the FLAN T5 model was able to generate both coherent English and a s
 
 Thus, considering the performance of the models and the symptoms in the examples, it would seem that the models trained 
 from scratch are under-fitting with a high loss value comparatively and a developing ability to associate the input with 
-the output. To remedy the issue without having the same budget as Google, a solution is to apply the Chinchilla Scaling 
+the output. This also seems to be compatible with the observation that the MoE models performed worse during 
+pre-training. To remedy the issue without having the same budget as Google, a solution is to apply the Chinchilla Scaling 
 Laws to adjust the size of the model and the dataset while considering the amount of time required to train.
 
 ## Chinchilla Scaling Law
