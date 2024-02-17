@@ -41,6 +41,7 @@ if __name__ == "__main__":
     tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
     model = AutoModelForSeq2SeqLM.from_pretrained(script_args.model_path)
     model.config.output_router_logits = False
+    model.generation_config.max_new_tokens = 128
 
     data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, model=rot5)
     print(f"Loading data from: {script_args.dataset_path}")

@@ -64,6 +64,9 @@ if __name__ == "__main__":
     print(f"Decoder Start ID set to {config.decoder_start_token_id}")
     t5 = T5ForConditionalGeneration(config)
 
+    num_params = sum(p.numel() for p in t5.parameters() if p.requires_grad)
+    print(f"Num Params: {num_params}")
+
     if train_args.gradient_checkpointing:
         t5.config.use_cache = False
 
