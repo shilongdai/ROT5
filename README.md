@@ -385,5 +385,6 @@ despite having a much smaller size and less training.
 ## Next Steps
 
 - Perform more ablation study on separating the effect of Chinchilla Scaling and using the task variant of the dataset for pre-training
+- Use decoder-style ROPE by treating the encoder output positions as if they were prepended like in decoder LMs for the cross attention
 - Apply transfer learning to improve the model by training the model on progressively more advanced data such as the "textbook" data, and scaling up the parameters at the same time by re-introducing MoE blocks.
 - Use model distillation techniques with Flan-T5 to experiment with replicating the behaviors of Flan-T5 but with the mini model
