@@ -291,7 +291,7 @@ $$ N_{opt}(C) = 0.6 C^{0.45} $$
 
 $$ D_{opt}(C) = 0.3 C^{0.55} $$
 
-where $$C$$ is the number of flops, $$N_{opt}$$ is the optimal number of parameters, $$D_{opt}$$ is the optimal number 
+where $C$ is the number of flops, $N_{opt}$ is the optimal number of parameters, $D_{opt}$ is the optimal number 
 of tokens in the dataset.
 
 It is important to note that the experiments performed in the paper which lead to these results used a causal language 
