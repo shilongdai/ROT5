@@ -306,8 +306,8 @@ Thus, to get a better model, pre-training was performed on the task variant whil
 data for the UL2 pre-training objective.
 
 After some trial tuning to understand the training time, the dataset size was determined to be full epochs of the task 
-variant of the dataset leading to a total of $$2 x 684805492$$ tokens. Then, by plugging in the token counts, the 
-Chinchilla flops estimate would be $$3.65 x 10^17$$. Then, using the derived Chinchilla flops count, the target number 
+variant of the dataset leading to a total of $$2 \times 684805492$$ tokens. Then, by plugging in the token counts, the 
+Chinchilla flops estimate would be $$3.65 \times 10^17$$. Then, using the derived Chinchilla flops count, the target number 
 of parameters was calculated to be 48M. By configuring the model so that:
 
 - **Number of Heads:** 16
